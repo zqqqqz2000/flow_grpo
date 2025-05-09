@@ -29,7 +29,7 @@ def jpeg_compressibility():
     return _fn
 
 def aesthetic_score():
-    from ddpo_pytorch.aesthetic_scorer import AestheticScorer
+    from flow_grpo.aesthetic_scorer import AestheticScorer
 
     scorer = AestheticScorer(dtype=torch.float32).cuda()
 
@@ -45,7 +45,7 @@ def aesthetic_score():
     return _fn
 
 def pickscore_score(device):
-    from ddpo_pytorch.pickscore_scorer import PickScoreScorer
+    from flow_grpo.pickscore_scorer import PickScoreScorer
 
     scorer = PickScoreScorer(dtype=torch.float32, device=device)
 
@@ -60,7 +60,7 @@ def pickscore_score(device):
     return _fn
 
 def imagereward_score(device):
-    from ddpo_pytorch.imagereward_scorer import ImageRewardScorer
+    from flow_grpo.imagereward_scorer import ImageRewardScorer
 
     scorer = ImageRewardScorer(dtype=torch.float32, device=device)
 
@@ -76,7 +76,7 @@ def imagereward_score(device):
     return _fn
 
 def qwenvl_score(device):
-    from ddpo_pytorch.qwenvl import QwenVLScorer
+    from flow_grpo.qwenvl import QwenVLScorer
 
     scorer = QwenVLScorer(dtype=torch.bfloat16, device=device)
 
@@ -93,7 +93,7 @@ def qwenvl_score(device):
 
     
 def ocr_score(device):
-    from ddpo_pytorch.ocr import OcrScorer
+    from flow_grpo.ocr import OcrScorer
 
     scorer = OcrScorer()
 

@@ -4,20 +4,51 @@ import os
 
 base = imp.load_source("base", os.path.join(os.path.dirname(__file__), "base.py"))
 
+def compressibility():
+    config = base.get_config()
+
+    config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
+    config.dataset = os.path.join(os.getcwd(), "dataset/pickscore")
+
+    config.num_epochs = 100
+    config.use_lora = True
+
+    config.sample.batch_size = 8
+    config.sample.num_batches_per_epoch = 4
+
+    config.train.batch_size = 4
+    config.train.gradient_accumulation_steps = 2
+
+    # prompting
+    config.prompt_fn = "general_ocr"
+
+    # rewards
+    config.reward_fn = {"jpeg_compressibility": 1}
+    config.per_prompt_stat_tracking = True
+    return config
+
 def general_ocr_sd3():
     config = compressibility()
-    config.dataset = "dataset/ocr"
+    config.dataset = os.path.join(os.getcwd(), "dataset/ocr")
 
     # sd3.5 medium
-    config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
+    # config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
+    config.pretrained.model = "/m2v_intern/liujie/research/huggingface/model/stabilityai/stable-diffusion-3.5-medium-mc"
     config.sample.num_steps = 10
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale=4.5
 
-    # 8*A800
+    # # 8*A800
+    # config.resolution = 512
+    # config.sample.train_batch_size = 12
+    # config.sample.num_image_per_prompt = 24
+    # config.sample.num_batches_per_epoch = 12
+    # config.sample.test_batch_size = 16 # 11 is a special design, the test set has a total of 1018, to make 8*16*n as close as possible to 1018, because when the number of samples cannot be divided evenly by the number of cards, multi-card will fill the last batch to ensure each card has the same number of samples, affecting gradient synchronization.
+
+    # 1 A800
     config.resolution = 512
     config.sample.train_batch_size = 12
-    config.sample.num_image_per_prompt = 24
+    config.sample.num_image_per_prompt = 6
     config.sample.num_batches_per_epoch = 12
     config.sample.test_batch_size = 16 # 11 is a special design, the test set has a total of 1018, to make 8*16*n as close as possible to 1018, because when the number of samples cannot be divided evenly by the number of cards, multi-card will fill the last batch to ensure each card has the same number of samples, affecting gradient synchronization.
 
@@ -34,7 +65,7 @@ def general_ocr_sd3():
     config.num_epochs = 100000
     config.save_freq = 60 # epoch
     config.eval_freq = 60
-    config.save_dir = 'logs/ocr/sd3.5-M
+    config.save_dir = 'logs/ocr/sd3.5-M'
     config.reward_fn = {
         # "geneval": 1.0,
         "ocr": 1.0,
@@ -48,7 +79,7 @@ def general_ocr_sd3():
 
 def geneval_sd3():
     config = compressibility()
-    config.dataset = "dataset/geneval"
+    config.dataset = os.path.join(os.getcwd(), "dataset/geneval")
 
     # sd3.5 medium
     config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
@@ -74,7 +105,7 @@ def geneval_sd3():
     config.num_epochs = 100000
     config.save_freq = 60 # epoch
     config.eval_freq = 60
-    config.save_dir = 'logs/geneval/sd3.5-M
+    config.save_dir = 'logs/geneval/sd3.5-M'
     config.reward_fn = {
         "geneval": 1.0,
         # "imagereward": 1.0,
@@ -88,7 +119,7 @@ def geneval_sd3():
 
 def pickscore_sd3():
     config = compressibility()
-    config.dataset = "dataset/pickscore"
+    config.dataset = os.path.join(os.getcwd(), "dataset/pickscore")
 
     # sd3.5 medium
     config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
@@ -116,7 +147,7 @@ def pickscore_sd3():
     config.num_epochs = 100000
     config.save_freq = 60 # epoch
     config.eval_freq = 60
-    config.save_dir = 'logs/pickscore/sd3.5-M
+    config.save_dir = 'logs/pickscore/sd3.5-M'
     config.reward_fn = {
         # "geneval": 1.0,
         "pickscore": 1.0,

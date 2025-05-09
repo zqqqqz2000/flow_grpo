@@ -9,7 +9,6 @@ This is an official implementation of Flow-GRPO: Training Flow Matching Models v
 git clone https://github.com/yifan123/flow_grpo.git
 cd flow_grpo
 conda create -n flow_grpo python=3.10.16
-# Then
 pip install -e .
 ```
 
@@ -21,6 +20,7 @@ Please install paddle-ocr:
 ```bash
 pip install paddlepaddle-gpu==2.6.2
 pip install paddleocr==2.9.1
+pip install python-Levenshtein
 ```
 Then, pre-download the model using the Python command line:
 ```python
@@ -29,7 +29,7 @@ ocr = PaddleOCR(use_angle_cls=False, lang="en", use_gpu=False, show_log=False)
 ```
 
 ### GenEval
-Please create a new Conda virtual environment and install the corresponding dependencies according to the instructions in [(WIP) LLaVA-server](https://github.com/yifan123/LLaVA-server).
+Please create a new Conda virtual environment and install the corresponding dependencies according to the instructions in [(WIP) LLaVA-server](https://github.com/yifan123/LLaVA_server).
 
 ## Usage
 Single-node training:

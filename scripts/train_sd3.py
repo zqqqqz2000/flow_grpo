@@ -15,13 +15,12 @@ from diffusers.loaders import AttnProcsLayers
 from diffusers.utils.torch_utils import is_compiled_module
 from diffusers.training_utils import compute_density_for_timestep_sampling, compute_loss_weighting_for_sd3
 import numpy as np
-import ddpo_pytorch.prompts
-import ddpo_pytorch.rewards
-from ddpo_pytorch.stat_tracking import PerPromptStatTracker
-from ddpo_pytorch.diffusers_patch.sd3_pipeline_with_logprob import pipeline_with_logprob
-from ddpo_pytorch.diffusers_patch.sd3_sde_with_logprob import sde_step_with_logprob
-from ddpo_pytorch.diffusers_patch.train_dreambooth_lora_sd3 import encode_prompt
-from ddpo_pytorch.dataset import JourneyDBDataset, collate_fn
+import flow_grpo.prompts
+import flow_grpo.rewards
+from flow_grpo.stat_tracking import PerPromptStatTracker
+from flow_grpo.diffusers_patch.sd3_pipeline_with_logprob import pipeline_with_logprob
+from flow_grpo.diffusers_patch.sd3_sde_with_logprob import sde_step_with_logprob
+from flow_grpo.diffusers_patch.train_dreambooth_lora_sd3 import encode_prompt
 import torch
 import wandb
 from functools import partial
@@ -33,7 +32,7 @@ from peft import LoraConfig, get_peft_model, set_peft_model_state_dict, PeftMode
 from peft.utils import get_peft_model_state_dict
 import random
 from torch.utils.data import Dataset, DataLoader, Sampler
-from ddpo_pytorch.ema import EMAModuleWrapper
+from flow_grpo.ema import EMAModuleWrapper
 
 tqdm = partial(tqdm.tqdm, dynamic_ncols=True)
 
@@ -45,7 +44,7 @@ logger = get_logger(__name__)
 
 class TextPromptDataset(Dataset):
     def __init__(self, dataset, split='train'):
-        self.file_path = os.path.join(dataset, f'{split}_longer.txt')
+        self.file_path = os.path.join(dataset, f'{split}.txt')
         with open(self.file_path, 'r') as f:
             self.prompts = [line.strip() for line in f.readlines()]
         
@@ -495,8 +494,8 @@ def main(_):
     )
 
     # prepare prompt and reward fn
-    reward_fn = getattr(ddpo_pytorch.rewards, 'multi_score')(accelerator.device, config.reward_fn)
-    eval_reward_fn = getattr(ddpo_pytorch.rewards, 'multi_score')(accelerator.device, config.reward_fn)
+    reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn)
+    eval_reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn)
 
     if config.prompt_fn == "general_ocr":
         train_dataset = TextPromptDataset(config.dataset, 'train')
@@ -656,9 +655,9 @@ def main(_):
                 truncation=True,
                 return_tensors="pt",
             ).input_ids.to(accelerator.device)
-            if i==0 and epoch % config.eval_freq == 0:
+            if i==0 and epoch % config.eval_freq == 0 and epoch>0:
                 eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerator, global_step, eval_reward_fn, executor, autocast, num_train_timesteps, ema, transformer_trainable_parameters)
-            if i==0 and epoch % config.save_freq == 0 and accelerator.is_main_process:
+            if i==0 and epoch % config.save_freq == 0 and epoch>0 and accelerator.is_main_process:
                 save_ckpt(config.save_dir, transformer, global_step, accelerator, ema, transformer_trainable_parameters, config)
             # 这里是故意的，因为前两个epoch收集的group size会有bug,经过两个epoch后，group_size稳定成指定的
             if epoch < 2:
@@ -679,7 +678,6 @@ def main(_):
                         height=config.resolution,
                         width=config.resolution, 
                         kl_reward=config.sample.kl_reward,
-                        num_train_timesteps=num_train_timesteps+1,
                 )
 
             latents = torch.stack(
@@ -688,9 +686,6 @@ def main(_):
             log_probs = torch.stack(log_probs, dim=1)  # shape after stack (batch_size, num_steps)
             kls = torch.stack(kls, dim=1) 
             kl = kls.detach()
-
-            if accelerator.is_local_main_process:
-                print("kl: ", kl.mean())
 
             timesteps = pipeline.scheduler.timesteps.repeat(
                 config.sample.train_batch_size, 1
