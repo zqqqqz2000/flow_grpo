@@ -2,8 +2,6 @@
 
 This is an official implementation of Flow-GRPO: Training Flow Matching Models via Online RL.
 
-![Flow-GRPO](teaser.png)
-
 ## Installation
 ```bash
 git clone https://github.com/yifan123/flow_grpo.git

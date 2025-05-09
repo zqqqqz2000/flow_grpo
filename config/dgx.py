@@ -32,8 +32,7 @@ def general_ocr_sd3():
     config.dataset = os.path.join(os.getcwd(), "dataset/ocr")
 
     # sd3.5 medium
-    # config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
-    config.pretrained.model = "/m2v_intern/liujie/research/huggingface/model/stabilityai/stable-diffusion-3.5-medium-mc"
+    config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
     config.sample.num_steps = 10
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale=4.5
@@ -45,7 +44,8 @@ def general_ocr_sd3():
     # config.sample.num_batches_per_epoch = 12
     # config.sample.test_batch_size = 16 # 11 is a special design, the test set has a total of 1018, to make 8*16*n as close as possible to 1018, because when the number of samples cannot be divided evenly by the number of cards, multi-card will fill the last batch to ensure each card has the same number of samples, affecting gradient synchronization.
 
-    # 1 A800
+    # 1 A800 This is just to ensure it runs quickly on a single GPU, though the performance may degrade.
+    # If using 8 GPUs, please comment out this section and use the 8-GPU configuration above instead.
     config.resolution = 512
     config.sample.train_batch_size = 12
     config.sample.num_image_per_prompt = 6
