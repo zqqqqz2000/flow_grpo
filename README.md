@@ -50,7 +50,32 @@ bash scripts/multi_node/main.sh
 bash scripts/multi_node/main1.sh
 bash scripts/multi_node/main2.sh
 ```
+### Multi Reward Training
+For multi-reward settings, you can pass in a dictionary where each key is a reward name and the corresponding value is its weight.
+For example:
 
+```python
+{
+    "pickscore": 0.5,
+    "ocr": 0.2,
+    "aesthetic": 0.3
+}
+```
+
+This means the final reward is a weighted sum of the individual rewards.
+
+The following reward models are currently supported:
+* **Geneval** evaluates T2I models on complex compositional prompts.
+* **OCR** provides an OCR-based reward.
+* **PickScore** is a general-purpose T2I reward model trained on human preferences.
+* **[DeQA](https://github.com/zhiyuanyou/DeQA-Score)** is a multimodal LLM-based image quality assessment model that measures the impact of distortions and texture damage on perceived quality.
+* **ImageReward** is a general-purpose T2I reward model capturing text-image alignment, visual fidelity, and safety.
+* **QwenVL** is an experimental reward model using prompt engineering.
+* **Aesthetic** is a CLIP-based linear regressor predicting image aesthetic scores.
+* **JPEG\_Compressibility** measures image size as a proxy for quality.
+* **UnifiedReward** is a state-of-the-art reward model for multimodal understanding and generation, topping the human preference leaderboard.
+
+        
 ## Important Hyperparameters
 You can adjust the parameters in `config/dgx.py` to tune different hyperparameters. An empirical finding is that `config.sample.train_batch_size * num_gpu / config.sample.num_image_per_prompt * config.sample.num_batches_per_epoch = 48`, i.e., `group_number=48`, `group_size=24`.
 Additionally, setting `config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch // 2` also yields good performance.

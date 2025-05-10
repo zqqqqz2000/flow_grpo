@@ -69,7 +69,7 @@ def general_ocr_sd3():
     config.reward_fn = {
         # "geneval": 1.0,
         "ocr": 1.0,
-        # "unifiedreward_sglang": 0.7,
+        # "unifiedreward": 0.7,
     }
     
     config.prompt_fn = "general_ocr"
@@ -109,7 +109,7 @@ def geneval_sd3():
     config.reward_fn = {
         "geneval": 1.0,
         # "imagereward": 1.0,
-        # "unifiedreward_sglang": 0.7,
+        # "unifiedreward": 0.7,
     }
     
     config.prompt_fn = "geneval"
@@ -151,7 +151,7 @@ def pickscore_sd3():
     config.reward_fn = {
         # "geneval": 1.0,
         "pickscore": 1.0,
-        # "unifiedreward_sglang": 0.7,
+        # "unifiedreward": 0.7,
     }
     
     config.prompt_fn = "general_ocr"
