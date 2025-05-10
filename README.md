@@ -35,7 +35,7 @@ ocr = PaddleOCR(use_angle_cls=False, lang="en", use_gpu=False, show_log=False)
 ```
 
 ### GenEval
-Please create a new Conda virtual environment and install the corresponding dependencies according to the instructions in [(WIP) LLaVA-server](https://github.com/yifan123/LLaVA_server).
+Please create a new Conda virtual environment and install the corresponding dependencies according to the instructions in [reward-server](https://github.com/yifan123/reward-server).
 
 ## Usage
 Single-node training:
