@@ -2,6 +2,14 @@
 
 This is an official implementation of Flow-GRPO: Training Flow Matching Models via Online RL.
 
+
+
+| Task    | Model |
+| -------- | -------- |
+| GenEval     | [🤗GenEval](https://huggingface.co/jieliu/SD3.5M-FlowGRPO-GenEval) |
+| Text Rendering     | [🤗Text](https://huggingface.co/jieliu/SD3.5M-FlowGRPO-Text) |
+| Human Preference Alignment     | [🤗PickScore](https://huggingface.co/jieliu/SD3.5M-FlowGRPO-PickScore) |
+
 ## Installation
 ```bash
 git clone https://github.com/yifan123/flow_grpo.git
@@ -49,3 +57,16 @@ Additionally, setting `config.train.gradient_accumulation_steps = config.sample.
 
 ## Acknowledgement
 This repo is based on [ddpo-pytorch](https://github.com/kvablack/ddpo-pytorch) and [diffusers](https://github.com/huggingface/diffusers). We thank the authors for their valuable contributions to the AIGC community. Special thanks to Kevin Black for the excellent *ddpo-pytorch* repo.
+
+## Citation
+```
+@misc{liu2025flowgrpo,
+      title={Flow-GRPO: Training Flow Matching Models via Online RL}, 
+      author={Jie Liu and Gongye Liu and Jiajun Liang and Yangguang Li and Jiaheng Liu and Xintao Wang and Pengfei Wan and Di Zhang and Wanli Ouyang},
+      year={2025},
+      eprint={2505.05470},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2505.05470}, 
+}
+```
