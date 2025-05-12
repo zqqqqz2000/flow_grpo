@@ -2,8 +2,16 @@
 
 This is an official implementation of Flow-GRPO: Training Flow Matching Models via Online RL.
 
+## 🔔 News
 
+**[Update]** We release a new **GenEval model** that maintains image quality close to the **base model**, while still achieving the original **GenEval score of 95**. _Feel free to give it a try!_
 
+## ✅ TODO
+
+- [ ] Provide a **web demo** showcasing a wide range of generation examples for **GenEval**, **OCR**, and **PickScore**. _@GongyeLiu is working on this urgently._
+- [ ] Provide a **web visualization** of image evolution during training for all three tasks. _@GongyeLiu is working on this urgently._
+
+## Model
 | Task    | Model |
 | -------- | -------- |
 | GenEval     | [🤗GenEval](https://huggingface.co/jieliu/SD3.5M-FlowGRPO-GenEval) |
