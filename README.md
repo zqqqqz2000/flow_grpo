@@ -4,7 +4,7 @@ This is an official implementation of Flow-GRPO: Training Flow Matching Models v
 
 ## 🔔 News
 
-**[Update]** We now provide an online demo for all three tasks at https://88750a65815db1a991.gradio.live/. You're welcome to try it out!
+**[Update]** We now provide an online demo for all three tasks at https://huggingface.co/spaces/jieliu/SD3.5-M-Flow-GRPO. You're welcome to try it out!
 
 ## ✅ TODO
 - [x] Provide a gradio demo
