@@ -5,6 +5,7 @@ This is an official implementation of Flow-GRPO: Training Flow Matching Models v
 ## 🔔 News
 
 **[Update]** We showcase image examples from three tasks and their training evolution at https://gongyeliu.github.io/Flow-GRPO. Check them out!
+
 **[Update]** We now provide an online demo for all three tasks at https://huggingface.co/spaces/jieliu/SD3.5-M-Flow-GRPO. You're welcome to try it out!
 
 ## ✅ TODO
