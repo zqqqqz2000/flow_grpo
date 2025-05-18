@@ -1,4 +1,4 @@
-<h1 align="center"> Flow-GRPO: Training Flow Matching Models via Online RL </h1>
+<h1 align="center"> Flow-GRPO:<br>Training Flow Matching Models via Online RL </h1>
 <div align="center">
   <a href='https://arxiv.org/abs/2505.05470'><img src='https://img.shields.io/badge/ArXiv-red?logo=arxiv'></a>  &nbsp;
   <a href='https://gongyeliu.github.io/Flow-GRPO/'><img src='https://img.shields.io/badge/Visualization-green?logo=github'></a> &nbsp;
