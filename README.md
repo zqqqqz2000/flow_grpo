@@ -29,8 +29,10 @@ conda create -n flow_grpo python=3.10.16
 pip install -e .
 ```
 ### 2. Reward Preparation
-The steps above only install the current repository. Since each reward model may rely on different versions, combining them in one Conda environment can cause version conflicts. To avoid this, we adopt a remote server setup inspired by ddpo-pytorch. You only need to install the specific reward model you plan to use. PickScore requires no additional installation.
+The steps above only install the current repository. Since each reward model may rely on different versions, combining them in one Conda environment can cause version conflicts. To avoid this, we adopt a remote server setup inspired by ddpo-pytorch. You only need to install the specific reward model you plan to use.
 
+#### GenEval
+Please create a new Conda virtual environment and install the corresponding dependencies according to the instructions in [reward-server](https://github.com/yifan123/reward-server).
 
 #### OCR
 Please install paddle-ocr:
@@ -45,8 +47,19 @@ from paddleocr import PaddleOCR
 ocr = PaddleOCR(use_angle_cls=False, lang="en", use_gpu=False, show_log=False)
 ```
 
-#### GenEval
+#### Pickscore
+PickScore requires no additional installation.
+
+#### DeQA
 Please create a new Conda virtual environment and install the corresponding dependencies according to the instructions in [reward-server](https://github.com/yifan123/reward-server).
+
+#### UnifiedReward
+We use sglang to deploy the reward service, and we also recommend using sglang or vllm for deploying VLM-based reward models.
+After installing sglang, please run the following command to launch UnifiedReward:
+
+```bash
+python -m sglang.launch_server --model-path CodeGoat24/UnifiedReward-7b-v1.5 --api-key flowgrpo --port 17140 --chat-template chatml-llava --enable-p2p-check --mem-fraction-static 0.85
+```
 
 ### 3. Start Training
 Single-node training:
