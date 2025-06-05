@@ -57,11 +57,17 @@ def general_ocr_sd3():
     config.train.num_inner_epochs = 1
     config.train.timestep_fraction = 0.99
     # kl loss
-    config.train.beta = 0.001
+    config.train.beta = 0.004
     # kl reward
+    # KL reward and KL loss are two ways to incorporate KL divergence. KL reward adds KL to the reward, while KL loss, introduced by GRPO, directly adds KL loss to the policy loss. We support both methods, but KL loss is recommended as the preferred option.
     config.sample.kl_reward = 0
+    # We also support using SFT data in RL training for supervised learning to prevent quality drop, but this option was unused
+    config.train.sft=0.0
+    config.train.sft_batch_size=3
+    # Whether to use the std of all samples or the current group's.
     config.sample.global_std=True
     config.train.ema=True
+    # A large num_epochs is intentionally set here. Training will be manually stopped once sufficient
     config.num_epochs = 100000
     config.save_freq = 60 # epoch
     config.eval_freq = 60
@@ -98,7 +104,7 @@ def geneval_sd3():
     config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch//2
     config.train.num_inner_epochs = 1
     config.train.timestep_fraction = 0.99
-    config.train.beta = 0.01
+    config.train.beta = 0.004
     config.sample.kl_reward = 0
     config.sample.global_std=True
     config.train.ema=True
@@ -138,7 +144,7 @@ def pickscore_sd3():
     config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch//2
     config.train.num_inner_epochs = 1
     config.train.timestep_fraction = 0.99
-    config.train.beta = 0    
+    config.train.beta = 0.001    
     config.train.sft=0.0
     config.train.sft_batch_size=3
     config.sample.kl_reward = 0

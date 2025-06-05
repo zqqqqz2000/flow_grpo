@@ -27,10 +27,7 @@ def get_config():
     # containing checkpoints, in which case the latest one will be used. `config.use_lora` must be set to the same value
     # as the run that generated the saved checkpoint.
     config.resume_from = ""
-    # whether or not to use LoRA. LoRA reduces memory usage significantly by injecting small weight matrices into the
-    # attention layers of the UNet. with LoRA, fp16, and a batch size of 1, finetuning Stable Diffusion should take
-    # about 10GB of GPU memory. beware that if LoRA is disabled, training will take a lot of memory and saved checkpoint
-    # files will also be large.
+    # whether or not to use LoRA.
     config.use_lora = True
     config.dataset = ""
     config.resolution = 768
