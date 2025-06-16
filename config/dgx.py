@@ -42,15 +42,15 @@ def general_ocr_sd3():
     # config.sample.train_batch_size = 12
     # config.sample.num_image_per_prompt = 24
     # config.sample.num_batches_per_epoch = 12
-    # config.sample.test_batch_size = 16 # 11 is a special design, the test set has a total of 1018, to make 8*16*n as close as possible to 1018, because when the number of samples cannot be divided evenly by the number of cards, multi-card will fill the last batch to ensure each card has the same number of samples, affecting gradient synchronization.
+    # config.sample.test_batch_size = 16 # 16 is a special design, the test set has a total of 1018, to make 8*16*n as close as possible to 1018, because when the number of samples cannot be divided evenly by the number of cards, multi-card will fill the last batch to ensure each card has the same number of samples, affecting gradient synchronization.
 
-    # 1 A800 This is just to ensure it runs quickly on a single GPU, though the performance may degrade.
+    # 1 A800. This is just to ensure it runs quickly on a single GPU, though the performance may degrade.
     # If using 8 GPUs, please comment out this section and use the 8-GPU configuration above instead.
     config.resolution = 512
     config.sample.train_batch_size = 12
     config.sample.num_image_per_prompt = 6
-    config.sample.num_batches_per_epoch = 12
-    config.sample.test_batch_size = 16 # 11 is a special design, the test set has a total of 1018, to make 8*16*n as close as possible to 1018, because when the number of samples cannot be divided evenly by the number of cards, multi-card will fill the last batch to ensure each card has the same number of samples, affecting gradient synchronization.
+    config.sample.num_batches_per_epoch = 6
+    config.sample.test_batch_size = 16 
 
     config.train.batch_size = config.sample.train_batch_size
     config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch//2
@@ -89,11 +89,11 @@ def geneval_sd3():
 
     # sd3.5 medium
     config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
-    config.sample.num_steps = 10 # 40
+    config.sample.num_steps = 10
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale=4.5
 
-    # 8 cards to start LLaVA Server
+    # 8*A800
     config.resolution = 512
     config.sample.train_batch_size = 6
     config.sample.num_image_per_prompt = 24
@@ -129,7 +129,7 @@ def pickscore_sd3():
 
     # sd3.5 medium
     config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
-    config.sample.num_steps = 5 # 40
+    config.sample.num_steps = 10
     config.sample.eval_num_steps = 40
     config.sample.guidance_scale=4.5
 
@@ -138,7 +138,7 @@ def pickscore_sd3():
     config.sample.train_batch_size = 12
     config.sample.num_image_per_prompt = 24
     config.sample.num_batches_per_epoch = 12
-    config.sample.test_batch_size = 16 # The test set has a total of 2048
+    config.sample.test_batch_size = 16 # # This bs is a special design, the test set has a total of 2048, to make gpu_num*bs*n as close as possible to 2048, because when the number of samples cannot be divided evenly by the number of cards, multi-card will fill the last batch to ensure each card has the same number of samples, affecting gradient synchronization.
 
     config.train.batch_size = config.sample.train_batch_size
     config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch//2
