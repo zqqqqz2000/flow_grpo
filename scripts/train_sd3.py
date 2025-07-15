@@ -18,7 +18,7 @@ from absl import app, flags
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
-from diffusers import StableDiffusion3Pipeline
+from diffusers import StableDiffusion3Pipeline, StableDiffusionXLPipeline
 from diffusers.utils.torch_utils import is_compiled_module
 from ml_collections import config_flags
 from peft import LoraConfig, PeftModel, get_peft_model, set_peft_model_state_dict
@@ -27,8 +27,10 @@ from torch.utils.data import DataLoader, Dataset, Sampler
 
 import flow_grpo.prompts
 import flow_grpo.rewards
-from flow_grpo.diffusers_patch.sd3_pipeline_with_logprob import pipeline_with_logprob
+from flow_grpo.diffusers_patch.sd3_pipeline_with_logprob import pipeline_with_logprob as sd3_pipeline_with_logprob
 from flow_grpo.diffusers_patch.sd3_sde_with_logprob import sde_step_with_logprob
+from flow_grpo.diffusers_patch.sdxl_ddim_with_logprob import ddim_step_with_logprob
+from flow_grpo.diffusers_patch.sdxl_pipeline_with_logprob import pipeline_with_logprob as sdxl_pipeline_with_logprob
 from flow_grpo.diffusers_patch.train_dreambooth_lora_sd3 import encode_prompt
 from flow_grpo.ema import EMAModuleWrapper
 from flow_grpo.stat_tracking import PerPromptStatTracker
@@ -128,11 +130,28 @@ class DistributedKRepeatSampler(Sampler):
         self.epoch = epoch  # Used to synchronize random state across epochs
 
 
-def compute_text_embeddings(prompt, text_encoders, tokenizers, max_sequence_length, device):
+def compute_text_embeddings(
+    prompt, text_encoders, tokenizers, max_sequence_length, device, is_sdxl=False, pipeline=None
+):
     with torch.no_grad():
-        prompt_embeds, pooled_prompt_embeds = encode_prompt(text_encoders, tokenizers, prompt, max_sequence_length)
-        prompt_embeds = prompt_embeds.to(device)
-        pooled_prompt_embeds = pooled_prompt_embeds.to(device)
+        if is_sdxl and pipeline is not None:
+            # For SDXL, use the pipeline's encode_prompt method
+            (
+                prompt_embeds,
+                negative_prompt_embeds,
+                pooled_prompt_embeds,
+                negative_pooled_prompt_embeds,
+            ) = pipeline.encode_prompt(
+                prompt=prompt,
+                device=device,
+                num_images_per_prompt=1,
+                do_classifier_free_guidance=False,
+            )
+        else:
+            # For SD3, use the existing method
+            prompt_embeds, pooled_prompt_embeds = encode_prompt(text_encoders, tokenizers, prompt, max_sequence_length)
+            prompt_embeds = prompt_embeds.to(device)
+            pooled_prompt_embeds = pooled_prompt_embeds.to(device)
     return prompt_embeds, pooled_prompt_embeds
 
 
@@ -193,38 +212,80 @@ def get_sigmas(noise_scheduler, timesteps, accelerator, n_dim=4, dtype=torch.flo
     return sigma
 
 
-def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config):
-    if config.train.cfg:
-        noise_pred = transformer(
-            hidden_states=torch.cat([sample["latents"][:, j]] * 2),
-            timestep=torch.cat([sample["timesteps"][:, j]] * 2),
-            encoder_hidden_states=embeds,
-            pooled_projections=pooled_embeds,
-            return_dict=False,
-        )[0]
-        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-        noise_pred_uncond = noise_pred_uncond.detach()
-        noise_pred = noise_pred_uncond + config.sample.guidance_scale * (noise_pred_text - noise_pred_uncond)
+def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config, is_sdxl=False):
+    if is_sdxl:
+        # SDXL model forward pass
+        if config.train.cfg:
+            # For SDXL, we need to pass additional conditioning
+            added_cond_kwargs = {
+                "text_embeds": torch.cat([pooled_embeds] * 2),
+                "time_ids": sample.get("time_ids", None),
+            }
+            if added_cond_kwargs["time_ids"] is not None:
+                added_cond_kwargs["time_ids"] = torch.cat([added_cond_kwargs["time_ids"]] * 2)
+
+            noise_pred = transformer(
+                torch.cat([sample["latents"][:, j]] * 2),
+                torch.cat([sample["timesteps"][:, j]] * 2),
+                encoder_hidden_states=embeds,
+                added_cond_kwargs=added_cond_kwargs,
+                return_dict=False,
+            )[0]
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred_uncond = noise_pred_uncond.detach()
+            noise_pred = noise_pred_uncond + config.sample.guidance_scale * (noise_pred_text - noise_pred_uncond)
+        else:
+            added_cond_kwargs = {"text_embeds": pooled_embeds, "time_ids": sample.get("time_ids", None)}
+            noise_pred = transformer(
+                sample["latents"][:, j],
+                sample["timesteps"][:, j],
+                encoder_hidden_states=embeds,
+                added_cond_kwargs=added_cond_kwargs,
+                return_dict=False,
+            )[0]
+
+        # compute the log prob using DDIM scheduler for SDXL
+        prev_sample, log_prob = ddim_step_with_logprob(
+            pipeline.scheduler,
+            noise_pred.float(),
+            sample["timesteps"][:, j],
+            sample["latents"][:, j].float(),
+            prev_sample=sample["next_latents"][:, j].float(),
+        )
+        return prev_sample, log_prob, None, None
     else:
-        noise_pred = transformer(
-            hidden_states=sample["latents"][:, j],
-            timestep=sample["timesteps"][:, j],
-            encoder_hidden_states=embeds,
-            pooled_projections=pooled_embeds,
-            return_dict=False,
-        )[0]
+        # SD3 model forward pass (original code)
+        if config.train.cfg:
+            noise_pred = transformer(
+                hidden_states=torch.cat([sample["latents"][:, j]] * 2),
+                timestep=torch.cat([sample["timesteps"][:, j]] * 2),
+                encoder_hidden_states=embeds,
+                pooled_projections=pooled_embeds,
+                return_dict=False,
+            )[0]
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred_uncond = noise_pred_uncond.detach()
+            noise_pred = noise_pred_uncond + config.sample.guidance_scale * (noise_pred_text - noise_pred_uncond)
+        else:
+            noise_pred = transformer(
+                hidden_states=sample["latents"][:, j],
+                timestep=sample["timesteps"][:, j],
+                encoder_hidden_states=embeds,
+                pooled_projections=pooled_embeds,
+                return_dict=False,
+            )[0]
 
-    # compute the log prob of next_latents given latents under the current model
-    prev_sample, log_prob, prev_sample_mean, std_dev_t = sde_step_with_logprob(
-        pipeline.scheduler,
-        noise_pred.float(),
-        sample["timesteps"][:, j],
-        sample["latents"][:, j].float(),
-        prev_sample=sample["next_latents"][:, j].float(),
-        noise_level=config.sample.noise_level,
-    )
+        # compute the log prob of next_latents given latents under the current model
+        prev_sample, log_prob, prev_sample_mean, std_dev_t = sde_step_with_logprob(
+            pipeline.scheduler,
+            noise_pred.float(),
+            sample["timesteps"][:, j],
+            sample["latents"][:, j].float(),
+            prev_sample=sample["next_latents"][:, j].float(),
+            noise_level=config.sample.noise_level,
+        )
 
-    return prev_sample, log_prob, prev_sample_mean, std_dev_t
+        return prev_sample, log_prob, prev_sample_mean, std_dev_t
 
 
 def eval(
@@ -241,6 +302,7 @@ def eval(
     num_train_timesteps,
     ema,
     transformer_trainable_parameters,
+    is_sdxl=False,
 ):
     if config.train.ema:
         ema.copy_ema_to(transformer_trainable_parameters, store_temp=True)
@@ -261,7 +323,13 @@ def eval(
     ):
         prompts, prompt_metadata = test_batch
         prompt_embeds, pooled_prompt_embeds = compute_text_embeddings(
-            prompts, text_encoders, tokenizers, max_sequence_length=128, device=accelerator.device
+            prompts,
+            text_encoders,
+            tokenizers,
+            max_sequence_length=128,
+            device=accelerator.device,
+            is_sdxl=is_sdxl,
+            pipeline=pipeline,
         )
         # The last batch may not be full batch_size
         if len(prompt_embeds) < len(sample_neg_prompt_embeds):
@@ -269,27 +337,41 @@ def eval(
             sample_neg_pooled_prompt_embeds = sample_neg_pooled_prompt_embeds[: len(prompt_embeds)]
         with autocast():
             with torch.no_grad():
-                images, _, _ = pipeline_with_logprob(
-                    pipeline,
-                    prompt_embeds=prompt_embeds,
-                    pooled_prompt_embeds=pooled_prompt_embeds,
-                    negative_prompt_embeds=sample_neg_prompt_embeds,
-                    negative_pooled_prompt_embeds=sample_neg_pooled_prompt_embeds,
-                    num_inference_steps=config.sample.eval_num_steps,
-                    guidance_scale=config.sample.guidance_scale,
-                    output_type="pt",
-                    height=config.resolution,
-                    width=config.resolution,
-                    noise_level=0,
-                )
-        rewards = executor.submit(reward_fn, images, prompts, prompt_metadata, only_strict=False)
+                if is_sdxl:
+                    images, _, _ = sdxl_pipeline_with_logprob(
+                        pipeline,
+                        prompt_embeds=prompt_embeds,
+                        pooled_prompt_embeds=pooled_prompt_embeds,
+                        negative_prompt_embeds=sample_neg_prompt_embeds,
+                        negative_pooled_prompt_embeds=sample_neg_pooled_prompt_embeds,
+                        num_inference_steps=config.sample.eval_num_steps,
+                        guidance_scale=config.sample.guidance_scale,
+                        output_type="pt",
+                        height=config.resolution,
+                        width=config.resolution,
+                    )
+                else:
+                    images, _, _ = sd3_pipeline_with_logprob(
+                        pipeline,
+                        prompt_embeds=prompt_embeds,
+                        pooled_prompt_embeds=pooled_prompt_embeds,
+                        negative_prompt_embeds=sample_neg_prompt_embeds,
+                        negative_pooled_prompt_embeds=sample_neg_pooled_prompt_embeds,
+                        num_inference_steps=config.sample.eval_num_steps,
+                        guidance_scale=config.sample.guidance_scale,
+                        output_type="pt",
+                        height=config.resolution,
+                        width=config.resolution,
+                        noise_level=0,
+                    )
+        rewards = executor.submit(reward_fn, images, prompts, prompt_metadata)
         # yield to to make sure reward computation starts
         time.sleep(0)
         rewards, reward_metadata = rewards.result()
 
-        for key, value in rewards.items():
-            rewards_gather = accelerator.gather(torch.as_tensor(value, device=accelerator.device)).cpu().numpy()
-            all_rewards[key].append(rewards_gather)
+        # Simplified reward handling for unifiedreward
+        rewards_gather = accelerator.gather(torch.as_tensor(rewards, device=accelerator.device)).cpu().numpy()
+        all_rewards["avg"].append(rewards_gather)
 
     last_batch_images_gather = accelerator.gather(torch.as_tensor(images, device=accelerator.device)).cpu().numpy()
     last_batch_prompt_ids = tokenizers[0](
@@ -301,11 +383,9 @@ def eval(
     ).input_ids.to(accelerator.device)
     last_batch_prompt_ids_gather = accelerator.gather(last_batch_prompt_ids).cpu().numpy()
     last_batch_prompts_gather = pipeline.tokenizer.batch_decode(last_batch_prompt_ids_gather, skip_special_tokens=True)
-    last_batch_rewards_gather = {}
-    for key, value in rewards.items():
-        last_batch_rewards_gather[key] = (
-            accelerator.gather(torch.as_tensor(value, device=accelerator.device)).cpu().numpy()
-        )
+    last_batch_rewards_gather = {
+        "avg": accelerator.gather(torch.as_tensor(rewards, device=accelerator.device)).cpu().numpy()
+    }
 
     all_rewards = {key: np.concatenate(value) for key, value in all_rewards.items()}
     if accelerator.is_main_process:
@@ -403,16 +483,30 @@ def main(_):
     set_seed(config.seed, device_specific=True)
 
     # load scheduler, tokenizer and models.
-    pipeline = StableDiffusion3Pipeline.from_pretrained(config.pretrained.model)
-    # freeze parameters of models to save more memory
-    pipeline.vae.requires_grad_(False)
-    pipeline.text_encoder.requires_grad_(False)
-    pipeline.text_encoder_2.requires_grad_(False)
-    pipeline.text_encoder_3.requires_grad_(False)
-    pipeline.transformer.requires_grad_(not config.use_lora)
+    # Determine if we're using SDXL based on model name
+    is_sdxl = "stable-diffusion-xl" in config.pretrained.model.lower() or "sdxl" in config.pretrained.model.lower()
 
-    text_encoders = [pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3]
-    tokenizers = [pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3]
+    if is_sdxl:
+        pipeline = StableDiffusionXLPipeline.from_pretrained(config.pretrained.model)
+        # freeze parameters of models to save more memory
+        pipeline.vae.requires_grad_(False)
+        pipeline.text_encoder.requires_grad_(False)
+        pipeline.text_encoder_2.requires_grad_(False)
+        pipeline.unet.requires_grad_(not config.use_lora)
+
+        text_encoders = [pipeline.text_encoder, pipeline.text_encoder_2]
+        tokenizers = [pipeline.tokenizer, pipeline.tokenizer_2]
+    else:
+        pipeline = StableDiffusion3Pipeline.from_pretrained(config.pretrained.model)
+        # freeze parameters of models to save more memory
+        pipeline.vae.requires_grad_(False)
+        pipeline.text_encoder.requires_grad_(False)
+        pipeline.text_encoder_2.requires_grad_(False)
+        pipeline.text_encoder_3.requires_grad_(False)
+        pipeline.transformer.requires_grad_(not config.use_lora)
+
+        text_encoders = [pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3]
+        tokenizers = [pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3]
 
     # disable safety checker
     pipeline.safety_checker = None
@@ -442,31 +536,60 @@ def main(_):
     pipeline.transformer.to(accelerator.device)
 
     if config.use_lora:
-        # Set correct lora layers
-        target_modules = [
-            "attn.add_k_proj",
-            "attn.add_q_proj",
-            "attn.add_v_proj",
-            "attn.to_add_out",
-            "attn.to_k",
-            "attn.to_out.0",
-            "attn.to_q",
-            "attn.to_v",
-        ]
-        transformer_lora_config = LoraConfig(
-            r=32,
-            lora_alpha=64,
-            init_lora_weights="gaussian",
-            target_modules=target_modules,
-        )
-        if config.train.lora_path:
-            pipeline.transformer = PeftModel.from_pretrained(pipeline.transformer, config.train.lora_path)
-            # After loading with PeftModel.from_pretrained, all parameters have requires_grad set to False. You need to call set_adapter to enable gradients for the adapter parameters.
-            pipeline.transformer.set_adapter("default")
-        else:
-            pipeline.transformer = get_peft_model(pipeline.transformer, transformer_lora_config)
+        if is_sdxl:
+            # SDXL LoRA configuration
+            target_modules = [
+                "to_k",
+                "to_q",
+                "to_v",
+                "to_out.0",
+                "proj_in",
+                "proj_out",
+                "ff.net.0.proj",
+                "ff.net.2",
+            ]
+            unet_lora_config = LoraConfig(
+                r=32,
+                lora_alpha=32,
+                init_lora_weights="gaussian",
+                target_modules=target_modules,
+            )
+            if config.train.lora_path:
+                pipeline.unet = PeftModel.from_pretrained(pipeline.unet, config.train.lora_path)
+                pipeline.unet.set_adapter("default")
+            else:
+                pipeline.unet = get_peft_model(pipeline.unet, unet_lora_config)
 
-    transformer = pipeline.transformer
+            model_to_train = pipeline.unet
+        else:
+            # SD3 LoRA configuration
+            target_modules = [
+                "attn.add_k_proj",
+                "attn.add_q_proj",
+                "attn.add_v_proj",
+                "attn.to_add_out",
+                "attn.to_k",
+                "attn.to_out.0",
+                "attn.to_q",
+                "attn.to_v",
+            ]
+            transformer_lora_config = LoraConfig(
+                r=32,
+                lora_alpha=64,
+                init_lora_weights="gaussian",
+                target_modules=target_modules,
+            )
+            if config.train.lora_path:
+                pipeline.transformer = PeftModel.from_pretrained(pipeline.transformer, config.train.lora_path)
+                pipeline.transformer.set_adapter("default")
+            else:
+                pipeline.transformer = get_peft_model(pipeline.transformer, transformer_lora_config)
+
+            model_to_train = pipeline.transformer
+    else:
+        model_to_train = pipeline.transformer if not is_sdxl else pipeline.unet
+
+    transformer = model_to_train
     transformer_trainable_parameters = list(filter(lambda p: p.requires_grad, transformer.parameters()))
     # This ema setting affects the previous 20 × 8 = 160 steps on average.
     ema = EMAModuleWrapper(
@@ -499,9 +622,9 @@ def main(_):
         eps=config.train.adam_epsilon,
     )
 
-    # prepare prompt and reward fn
-    reward_fn = getattr(flow_grpo.rewards, "multi_score")(accelerator.device, config.reward_fn)
-    eval_reward_fn = getattr(flow_grpo.rewards, "multi_score")(accelerator.device, config.reward_fn)
+    # prepare prompt and reward fn - simplified to use only unifiedreward
+    reward_fn = getattr(flow_grpo.rewards, "unifiedreward_score_sglang")(accelerator.device)
+    eval_reward_fn = getattr(flow_grpo.rewards, "unifiedreward_score_sglang")(accelerator.device)
 
     if config.prompt_fn == "general_ocr":
         train_dataset = TextPromptDataset(config.dataset, "train")
@@ -566,7 +689,13 @@ def main(_):
         raise NotImplementedError("Only general_ocr is supported with dataset")
 
     neg_prompt_embed, neg_pooled_prompt_embed = compute_text_embeddings(
-        [""], text_encoders, tokenizers, max_sequence_length=128, device=accelerator.device
+        [""],
+        text_encoders,
+        tokenizers,
+        max_sequence_length=128,
+        device=accelerator.device,
+        is_sdxl=is_sdxl,
+        pipeline=pipeline,
     )
 
     sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.train_batch_size, 1, 1)
@@ -635,6 +764,7 @@ def main(_):
                 num_train_timesteps,
                 ema,
                 transformer_trainable_parameters,
+                is_sdxl,
             )
         if epoch % config.save_freq == 0 and epoch > 0 and accelerator.is_main_process:
             save_ckpt(
@@ -655,7 +785,13 @@ def main(_):
             prompts, prompt_metadata = next(train_iter)
 
             prompt_embeds, pooled_prompt_embeds = compute_text_embeddings(
-                prompts, text_encoders, tokenizers, max_sequence_length=128, device=accelerator.device
+                prompts,
+                text_encoders,
+                tokenizers,
+                max_sequence_length=128,
+                device=accelerator.device,
+                is_sdxl=is_sdxl,
+                pipeline=pipeline,
             )
             prompt_ids = tokenizers[0](
                 prompts,
@@ -686,6 +822,33 @@ def main(_):
                         noise_level=config.sample.noise_level,
                         generator=generator,
                     )
+                    if is_sdxl:
+                        images, latents, log_probs = sdxl_pipeline_with_logprob(
+                            pipeline,
+                            prompt_embeds=prompt_embeds,
+                            pooled_prompt_embeds=pooled_prompt_embeds,
+                            negative_prompt_embeds=sample_neg_prompt_embeds,
+                            negative_pooled_prompt_embeds=sample_neg_pooled_prompt_embeds,
+                            num_inference_steps=config.sample.num_steps,
+                            guidance_scale=config.sample.guidance_scale,
+                            output_type="pt",
+                            height=config.resolution,
+                            width=config.resolution,
+                        )
+                    else:
+                        images, latents, log_probs = sd3_pipeline_with_logprob(
+                            pipeline,
+                            prompt_embeds=prompt_embeds,
+                            pooled_prompt_embeds=pooled_prompt_embeds,
+                            negative_prompt_embeds=sample_neg_prompt_embeds,
+                            negative_pooled_prompt_embeds=sample_neg_pooled_prompt_embeds,
+                            num_inference_steps=config.sample.num_steps,
+                            guidance_scale=config.sample.guidance_scale,
+                            output_type="pt",
+                            height=config.resolution,
+                            width=config.resolution,
+                            noise_level=config.sample.noise_level,
+                        )
 
             latents = torch.stack(latents, dim=1)  # (batch_size, num_steps + 1, 16, 96, 96)
             log_probs = torch.stack(log_probs, dim=1)  # shape after stack (batch_size, num_steps)
@@ -695,7 +858,7 @@ def main(_):
             )  # (batch_size, num_steps)
 
             # compute rewards asynchronously
-            rewards = executor.submit(reward_fn, images, prompts, prompt_metadata, only_strict=True)
+            rewards = executor.submit(reward_fn, images, prompts, prompt_metadata)
             # yield to to make sure reward computation starts
             time.sleep(0)
 
@@ -721,9 +884,8 @@ def main(_):
         ):
             rewards, reward_metadata = sample["rewards"].result()
             # accelerator.print(reward_metadata)
-            sample["rewards"] = {
-                key: torch.as_tensor(value, device=accelerator.device).float() for key, value in rewards.items()
-            }
+            # Simplified reward handling for unifiedreward
+            sample["rewards"] = {"avg": torch.as_tensor(rewards, device=accelerator.device).float()}
 
         # collate samples into dict where each entry has shape (num_batches_per_epoch * sample.batch_size, ...)
         samples = {
@@ -748,14 +910,14 @@ def main(_):
                     pil.save(os.path.join(tmpdir, f"{idx}.jpg"))  # 使用新的索引
 
                 sampled_prompts = [prompts[i] for i in sample_indices]
-                sampled_rewards = [rewards["avg"][i] for i in sample_indices]
+                sampled_rewards = [rewards[i] for i in sample_indices]
 
                 wandb.log(
                     {
                         "images": [
                             wandb.Image(
                                 os.path.join(tmpdir, f"{idx}.jpg"),
-                                caption=f"{prompt:.100} | avg: {avg_reward:.2f}",
+                                caption=f"{prompt:.100} | reward: {avg_reward:.2f}",
                             )
                             for idx, (prompt, avg_reward) in enumerate(zip(sampled_prompts, sampled_rewards))
                         ],
@@ -869,7 +1031,10 @@ def main(_):
             samples_batched = [dict(zip(samples_batched, x)) for x in zip(*samples_batched.values())]
 
             # train
-            pipeline.transformer.train()
+            if is_sdxl:
+                pipeline.unet.train()
+            else:
+                pipeline.transformer.train()
             info = defaultdict(list)
             for i, sample in tqdm(
                 list(enumerate(samples_batched)),
@@ -903,15 +1068,18 @@ def main(_):
                     with accelerator.accumulate(transformer):
                         with autocast():
                             prev_sample, log_prob, prev_sample_mean, std_dev_t = compute_log_prob(
-                                transformer, pipeline, sample, j, embeds, pooled_embeds, config
+                                transformer, pipeline, sample, j, embeds, pooled_embeds, config, is_sdxl
                             )
                             if config.train.beta > 0:
                                 with torch.no_grad():
                                     with transformer.module.disable_adapter():
-                                        prev_sample_ref, log_prob_ref, prev_sample_mean_ref, std_dev_t_ref = (
-                                            compute_log_prob(
-                                                transformer, pipeline, sample, j, embeds, pooled_embeds, config
-                                            )
+                                        (
+                                            prev_sample_ref,
+                                            log_prob_ref,
+                                            prev_sample_mean_ref,
+                                            std_dev_t_ref,
+                                        ) = compute_log_prob(
+                                            transformer, pipeline, sample, j, embeds, pooled_embeds, config, is_sdxl
                                         )
 
                         # grpo logic
