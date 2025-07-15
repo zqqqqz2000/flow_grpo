@@ -1,10 +1,12 @@
-from PIL import Image
-import torch
-import re
 import base64
+import re
 from io import BytesIO
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, AutoProcessor
+
+import torch
+from PIL import Image
 from qwen_vl_utils import process_vision_info
+from transformers import AutoProcessor, AutoTokenizer, Qwen2_5_VLForConditionalGeneration
+
 
 def pil_image_to_base64(image):
     buffered = BytesIO()
@@ -13,15 +15,17 @@ def pil_image_to_base64(image):
     base64_qwen = f"data:image;base64,{encoded_image_text}"
     return base64_qwen
 
+
 def extract_scores(output_text):
     scores = []
     for text in output_text:
-        match = re.search(r'<Score>(\d+)</Score>', text)
+        match = re.search(r"<Score>(\d+)</Score>", text)
         if match:
-            scores.append(float(match.group(1))/5)
+            scores.append(float(match.group(1)) / 5)
         else:
             scores.append(0)
     return scores
+
 
 class QwenVLScorer(torch.nn.Module):
     def __init__(self, device="cuda", dtype=torch.bfloat16):
@@ -37,7 +41,7 @@ class QwenVLScorer(torch.nn.Module):
         ).to(self.device)
         self.model.requires_grad_(False)
         self.processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", use_fast=True)
-        self.task = '''
+        self.task = """
 Your role is to evaluate the aesthetic quality score of given images.
 1. Bad: Extremely blurry, underexposed with significant noise, indiscernible
 subjects, and chaotic composition.
@@ -55,27 +59,28 @@ Please first provide a detailed analysis of the evaluation process, including th
 [Analyze the evaluation process in detail here]
 </Thought>
 <Score>X</Score>
-'''
-        
+"""
+
     @torch.no_grad()
     def __call__(self, prompt, images):
         images_base64 = [pil_image_to_base64(image) for image in images]
-        messages=[]
+        messages = []
         for base64_qwen in images_base64:
-            messages.append([
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": base64_qwen},
-                        {"type": "text", "text": self.task},
-                    ],
-                },
-            ])
+            messages.append(
+                [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "image": base64_qwen},
+                            {"type": "text", "text": self.task},
+                        ],
+                    },
+                ]
+            )
 
         # Preparation for batch inference
         texts = [
-            self.processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True)
-            for msg in messages
+            self.processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True) for msg in messages
         ]
         image_inputs, video_inputs = process_vision_info(messages)
         inputs = self.processor(
@@ -89,30 +94,27 @@ Please first provide a detailed analysis of the evaluation process, including th
 
         # Batch Inference
         generated_ids = self.model.generate(**inputs, max_new_tokens=2048)
-        generated_ids_trimmed = [
-            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-        ]
+        generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)]
         output_texts = self.processor.batch_decode(
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )
         rewards = extract_scores(output_texts)
         return rewards
 
+
 # Usage example
 def main():
-    scorer = QwenVLScorer(
-        device="cuda",
-        dtype=torch.bfloat16
-    )
-    images=[
-    "nasa.jpg",
+    scorer = QwenVLScorer(device="cuda", dtype=torch.bfloat16)
+    images = [
+        "nasa.jpg",
     ]
     pil_images = [Image.open(img) for img in images]
-    prompts=[
+    prompts = [
         'A astronaut’s glove floating in zero-g with "NASA 2049" on the wrist',
     ]
 
     print(scorer(None, pil_images))
+
 
 if __name__ == "__main__":
     main()

@@ -3,9 +3,12 @@
 # - It uses the patched version of `sde_step_with_logprob` from `sd3_sde_with_logprob.py`.
 # - It returns all the intermediate latents of the denoising process as well as the log probs of each denoising step.
 from typing import Any, Dict, List, Optional, Union
+
 import torch
 from diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion_3 import retrieve_timesteps
+
 from .sd3_sde_with_logprob import sde_step_with_logprob
+
 
 @torch.no_grad()
 def pipeline_with_logprob(
@@ -73,9 +76,7 @@ def pipeline_with_logprob(
 
     device = self._execution_device
 
-    lora_scale = (
-        self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
-    )
+    lora_scale = self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
     (
         prompt_embeds,
         negative_prompt_embeds,
@@ -155,22 +156,22 @@ def pipeline_with_logprob(
             if self.do_classifier_free_guidance:
                 noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
                 noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
-                
+
             latents_dtype = latents.dtype
 
             latents, log_prob, prev_latents_mean, std_dev_t = sde_step_with_logprob(
-                self.scheduler, 
-                noise_pred.float(), 
-                t.unsqueeze(0), 
+                self.scheduler,
+                noise_pred.float(),
+                t.unsqueeze(0),
                 latents.float(),
                 noise_level=noise_level,
             )
-            
+
             all_latents.append(latents)
             all_log_probs.append(log_prob)
             if latents.dtype != latents_dtype:
                 latents = latents.to(latents_dtype)
-            
+
             # call the callback, if provided
             if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                 progress_bar.update()
