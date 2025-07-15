@@ -1,6 +1,6 @@
 import numpy as np
 from collections import deque
-
+import torch
 
 class PerPromptStatTracker:
     def __init__(self, global_std=False):
@@ -8,8 +8,7 @@ class PerPromptStatTracker:
         self.stats = {}
         self.history_prompts = set()
 
-    # exp reward is for rwr
-    def update(self, prompts, rewards, exp=False):
+    def update(self, prompts, rewards, type='grpo'):
         prompts = np.array(prompts)
         rewards = np.array(rewards, dtype=np.float64)
         unique = np.unique(prompts)
@@ -28,7 +27,31 @@ class PerPromptStatTracker:
                 std = np.std(rewards, axis=0, keepdims=True) + 1e-4  # Use global std of all rewards
             else:
                 std = np.std(self.stats[prompt], axis=0, keepdims=True) + 1e-4
-            advantages[prompts == prompt] = (prompt_rewards - mean) / std
+            if type=='grpo':
+                advantages[prompts == prompt] = (prompt_rewards - mean) / std
+            elif type=='rwr':
+                # advantages[prompts == prompt] = (prompt_rewards - mean) / std
+                advantages[prompts == prompt] = prompt_rewards
+                # advantages[prompts == prompt] = torch.softmax(torch.tensor(prompt_rewards), dim=0).numpy()
+            elif type=='sft':
+                advantages[prompts == prompt] = (torch.tensor(prompt_rewards) == torch.max(torch.tensor(prompt_rewards))).float().numpy()
+            elif type=='dpo':
+                # Get the advantages of the current prompt
+                prompt_advantages = torch.tensor(prompt_rewards)
+                # Find the indices of the maximum and minimum values
+                max_idx = torch.argmax(prompt_advantages)
+                min_idx = torch.argmin(prompt_advantages)
+                # If all rewards in a group are the same
+                if max_idx == min_idx:
+                    min_idx = 0
+                    max_idx = 1
+                result = torch.zeros_like(prompt_advantages).float()
+                # Set the maximum index to 1, minimum index to -1
+                result[max_idx] = 1.0
+                result[min_idx] = -1.0
+                advantages[prompts == prompt] = result.numpy()
+                # print("reward difference one group", prompt_advantages[max_idx]-prompt_advantages[min_idx])
+            
         return advantages
 
     def get_stats(self):

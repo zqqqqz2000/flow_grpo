@@ -16,17 +16,14 @@ def get_config():
     config.num_epochs = 100
     # number of epochs between saving model checkpoints.
     config.save_freq = 20
-    config.eval_freq = 100
+    # number of epochs between evaluating the model.
+    config.eval_freq = 20
     # number of checkpoints to keep before overwriting old ones.
     config.num_checkpoint_limit = 5
     # mixed precision training. options are "fp16", "bf16", and "no". half-precision speeds up training significantly.
     config.mixed_precision = "fp16"
     # allow tf32 on Ampere GPUs, which can speed up training.
     config.allow_tf32 = True
-    # resume training from a checkpoint. either an exact checkpoint directory (e.g. checkpoint_50), or a directory
-    # containing checkpoints, in which case the latest one will be used. `config.use_lora` must be set to the same value
-    # as the run that generated the saved checkpoint.
-    config.resume_from = ""
     # whether or not to use LoRA.
     config.use_lora = True
     config.dataset = ""
@@ -41,12 +38,10 @@ def get_config():
 
     ###### Sampling ######
     config.sample = sample = ml_collections.ConfigDict()
-    # number of sampler inference steps.
+    # number of sampler inference steps for collecting dataset.
     sample.num_steps = 40
+    # number of sampler inference steps for evaluation.
     sample.eval_num_steps = 40
-    # eta parameter for the sde sampler. this controls the amount of noise injected into the sampling process, with 0.0
-    # being fully deterministic and 1.0 being equivalent to the DDPM sampler.
-    sample.eta = 1.0
     # classifier-free guidance weight. 1.0 is no guidance.
     sample.guidance_scale = 4.5
     # batch size (per GPU!) to use for sampling.
@@ -56,9 +51,10 @@ def get_config():
     # number of batches to sample per epoch. the total number of samples per epoch is `num_batches_per_epoch *
     # batch_size * num_gpus`.
     sample.num_batches_per_epoch = 2
-    sample.kl_reward = 0
     # Whether use all samples in a batch to compute std
-    sample.global_std = False
+    sample.global_std = True
+    # noise level
+    sample.noise_level = 0.7
 
     ###### Training ######
     config.train = train = ml_collections.ConfigDict()
@@ -98,6 +94,7 @@ def get_config():
     train.beta = 0.0
     # pretrained lora path
     train.lora_path = None
+    # save ema model
     train.ema = False
 
     ###### Prompt Function ######

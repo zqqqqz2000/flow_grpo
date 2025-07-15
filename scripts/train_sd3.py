@@ -10,10 +10,8 @@ from accelerate import Accelerator
 from ml_collections import config_flags
 from accelerate.utils import set_seed, ProjectConfiguration
 from accelerate.logging import get_logger
-from diffusers import StableDiffusion3Pipeline, FlowMatchEulerDiscreteScheduler
-from diffusers.loaders import AttnProcsLayers
+from diffusers import StableDiffusion3Pipeline
 from diffusers.utils.torch_utils import is_compiled_module
-from diffusers.training_utils import compute_density_for_timestep_sampling, compute_loss_weighting_for_sd3
 import numpy as np
 import flow_grpo.prompts
 import flow_grpo.rewards
@@ -26,10 +24,8 @@ import wandb
 from functools import partial
 import tqdm
 import tempfile
-import itertools
 from PIL import Image
 from peft import LoraConfig, get_peft_model, set_peft_model_state_dict, PeftModel
-from peft.utils import get_peft_model_state_dict
 import random
 from torch.utils.data import Dataset, DataLoader, Sampler
 from flow_grpo.ema import EMAModuleWrapper
@@ -82,46 +78,47 @@ class GenevalPromptDataset(Dataset):
 class DistributedKRepeatSampler(Sampler):
     def __init__(self, dataset, batch_size, k, num_replicas, rank, seed=0):
         self.dataset = dataset
-        self.batch_size = batch_size  # 每卡的batch大小
-        self.k = k                    # 每个样本重复的次数
-        self.num_replicas = num_replicas  # 总卡数
-        self.rank = rank              # 当前卡编号
-        self.seed = seed              # 随机种子，用于同步
+        self.batch_size = batch_size  # Batch size per replica
+        self.k = k                    # Number of repetitions per sample
+        self.num_replicas = num_replicas  # Total number of replicas
+        self.rank = rank              # Current replica rank
+        self.seed = seed              # Random seed for synchronization
         
-        # 计算每个迭代需要的不同样本数
+        # Compute the number of unique samples needed per iteration
         self.total_samples = self.num_replicas * self.batch_size
-        assert self.total_samples % self.k == 0, f"k can not div n*b, k{k}-num_replicas{num_replicas}-batch_size{batch_size}"
-        self.m = self.total_samples // self.k  # 不同样本数
-        self.epoch=0
+        assert self.total_samples % self.k == 0, f"k can not divide n*b, k{k}-num_replicas{num_replicas}-batch_size{batch_size}"
+        self.m = self.total_samples // self.k  # Number of unique samples
+        self.epoch = 0
 
     def __iter__(self):
         while True:
-            # 生成确定性的随机序列，确保所有卡同步
+            # Generate a deterministic random sequence to ensure all replicas are synchronized
             g = torch.Generator()
             g.manual_seed(self.seed + self.epoch)
-            # print('epoch', self.epoch)
-            # 随机选择m个不同的样本
+            
+            # Randomly select m unique samples
             indices = torch.randperm(len(self.dataset), generator=g)[:self.m].tolist()
-            # print(self.rank, 'indices', indices)
-            # 每个样本重复k次，生成总样本数n*b
+            
+            # Repeat each sample k times to generate n*b total samples
             repeated_indices = [idx for idx in indices for _ in range(self.k)]
             
-            # 打乱顺序确保均匀分配
+            # Shuffle to ensure uniform distribution
             shuffled_indices = torch.randperm(len(repeated_indices), generator=g).tolist()
             shuffled_samples = [repeated_indices[i] for i in shuffled_indices]
-            # print(self.rank, 'shuffled_samples', shuffled_samples)
-            # 将样本分割到各个卡
+            
+            # Split samples to each replica
             per_card_samples = []
             for i in range(self.num_replicas):
                 start = i * self.batch_size
                 end = start + self.batch_size
                 per_card_samples.append(shuffled_samples[start:end])
-            # print(self.rank, 'per_card_samples', per_card_samples[self.rank])
-            # 返回当前卡的样本索引
+            
+            # Return current replica's sample indices
             yield per_card_samples[self.rank]
     
     def set_epoch(self, epoch):
-        self.epoch = epoch  # 用于同步不同 epoch 的随机状态
+        self.epoch = epoch  # Used to synchronize random state across epochs
+
 
 def compute_text_embeddings(prompt, text_encoders, tokenizers, max_sequence_length, device):
     with torch.no_grad():
@@ -132,50 +129,42 @@ def compute_text_embeddings(prompt, text_encoders, tokenizers, max_sequence_leng
         pooled_prompt_embeds = pooled_prompt_embeds.to(device)
     return prompt_embeds, pooled_prompt_embeds
 
-def set_adapter_and_freeze_params(transformer, adapter_name):
-    transformer.module.set_adapter(adapter_name)
-    for name, param in transformer.named_parameters():
-        if "learner" in name:
-            param.requires_grad_(True)
-        elif "ref" in name:
-            param.requires_grad_(False)
-
 def calculate_zero_std_ratio(prompts, gathered_rewards):
     """
-    计算每个唯一提示词对应奖励值的标准差为零的比例
+    Calculate the proportion of unique prompts whose reward standard deviation is zero.
     
-    参数:
-        prompts: 提示词列表
-        gathered_rewards: 包含奖励值的字典，须包含'ori_avg'键
+    Args:
+        prompts: List of prompts.
+        gathered_rewards: Dictionary containing rewards, must include the key 'ori_avg'.
         
-    返回:
-        zero_std_ratio: 标准差为零的比例
-        prompt_std_devs: 每个唯一提示词对应的标准差数组
+    Returns:
+        zero_std_ratio: Proportion of prompts with zero standard deviation.
+        prompt_std_devs: Mean standard deviation across all unique prompts.
     """
-    # 将提示词列表转换为NumPy数组
+    # Convert prompt list to NumPy array
     prompt_array = np.array(prompts)
     
-    # 获取唯一提示词及其分组信息
+    # Get unique prompts and their group information
     unique_prompts, inverse_indices, counts = np.unique(
         prompt_array, 
         return_inverse=True,
         return_counts=True
     )
     
-    # 分组获取每个提示词对应的奖励值
+    # Group rewards for each prompt
     grouped_rewards = gathered_rewards['ori_avg'][np.argsort(inverse_indices)]
     split_indices = np.cumsum(counts)[:-1]
     reward_groups = np.split(grouped_rewards, split_indices)
     
-    # 计算每个分组的标准差
+    # Calculate standard deviation for each group
     prompt_std_devs = np.array([np.std(group) for group in reward_groups])
     
-    # 计算零标准差的比例
+    # Calculate the ratio of zero standard deviation
     zero_std_count = np.count_nonzero(prompt_std_devs == 0)
     zero_std_ratio = zero_std_count / len(prompt_std_devs)
     
-    return zero_std_ratio
-    
+    return zero_std_ratio, prompt_std_devs.mean()
+
 
 def get_sigmas(noise_scheduler, timesteps, accelerator, n_dim=4, dtype=torch.float32):
     sigmas = noise_scheduler.sigmas.to(device=accelerator.device, dtype=dtype)
@@ -198,6 +187,7 @@ def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, co
             return_dict=False,
         )[0]
         noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+        noise_pred_uncond = noise_pred_uncond.detach()
         noise_pred = (
             noise_pred_uncond
             + config.sample.guidance_scale
@@ -219,6 +209,7 @@ def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, co
         sample["timesteps"][:, j],
         sample["latents"][:, j].float(),
         prev_sample=sample["next_latents"][:, j].float(),
+        noise_level=config.sample.noise_level,
     )
 
     return prev_sample, log_prob, prev_sample_mean, std_dev_t
@@ -247,13 +238,13 @@ def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerat
             max_sequence_length=128, 
             device=accelerator.device
         )
-        # 最后一个batch可能不够batch_size
+        # The last batch may not be full batch_size
         if len(prompt_embeds)<len(sample_neg_prompt_embeds):
             sample_neg_prompt_embeds = sample_neg_prompt_embeds[:len(prompt_embeds)]
             sample_neg_pooled_prompt_embeds = sample_neg_pooled_prompt_embeds[:len(prompt_embeds)]
         with autocast():
             with torch.no_grad():
-                images, latents, log_probs, _ = pipeline_with_logprob(
+                images, _, _ = pipeline_with_logprob(
                     pipeline,
                     prompt_embeds=prompt_embeds,
                     pooled_prompt_embeds=pooled_prompt_embeds,
@@ -262,10 +253,9 @@ def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerat
                     num_inference_steps=config.sample.eval_num_steps,
                     guidance_scale=config.sample.guidance_scale,
                     output_type="pt",
-                    return_dict=False,
                     height=config.resolution,
                     width=config.resolution, 
-                    determistic=True,
+                    noise_level=0,
                 )
         rewards = executor.submit(reward_fn, images, prompts, prompt_metadata, only_strict=False)
         # yield to to make sure reward computation starts
@@ -280,7 +270,7 @@ def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerat
     last_batch_prompt_ids = tokenizers[0](
         prompts,
         padding="max_length",
-        max_length=77,
+        max_length=256,
         truncation=True,
         return_tensors="pt",
     ).input_ids.to(accelerator.device)
@@ -304,12 +294,12 @@ def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerat
                     (image.transpose(1, 2, 0) * 255).astype(np.uint8)
                 )
                 pil = pil.resize((config.resolution, config.resolution))
-                pil.save(os.path.join(tmpdir, f"{idx}.jpg"))  # 使用新的索引
+                pil.save(os.path.join(tmpdir, f"{idx}.jpg"))
             sampled_prompts = [last_batch_prompts_gather[index] for index in sample_indices]
             sampled_rewards = [{k: last_batch_rewards_gather[k][index] for k in last_batch_rewards_gather} for index in sample_indices]
             for key, value in all_rewards.items():
                 print(key, value.shape)
-            accelerator.log(
+            wandb.log(
                 {
                     "eval_images": [
                         wandb.Image(
@@ -351,20 +341,6 @@ def main(_):
     else:
         config.run_name += "_" + unique_id
 
-    if config.resume_from:
-        config.resume_from = os.path.normpath(os.path.expanduser(config.resume_from))
-        if "checkpoint_" not in os.path.basename(config.resume_from):
-            # get the most recent checkpoint in this directory
-            checkpoints = list(
-                filter(lambda x: "checkpoint_" in x, os.listdir(config.resume_from))
-            )
-            if len(checkpoints) == 0:
-                raise ValueError(f"No checkpoints found in {config.resume_from}")
-            config.resume_from = os.path.join(
-                config.resume_from,
-                sorted(checkpoints, key=lambda x: int(x.split("_")[-1]))[-1],
-            )
-
     # number of timesteps within each trajectory to train on
     num_train_timesteps = int(config.sample.num_steps * config.train.timestep_fraction)
 
@@ -375,21 +351,23 @@ def main(_):
     )
 
     accelerator = Accelerator(
-        log_with="wandb",
+        # log_with="wandb",
         mixed_precision=config.mixed_precision,
         project_config=accelerator_config,
         # we always accumulate gradients across timesteps; we want config.train.gradient_accumulation_steps to be the
         # number of *samples* we accumulate across, so we need to multiply by the number of training timesteps to get
         # the total number of optimizer steps to accumulate across.
-        gradient_accumulation_steps=config.train.gradient_accumulation_steps
-        * num_train_timesteps,
+        gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
     )
     if accelerator.is_main_process:
-        accelerator.init_trackers(
-            project_name="flow-grpo",
-            config=config.to_dict(),
-            init_kwargs={"wandb": {"name": config.run_name}},
+        wandb.init(
+            project="flow_grpo",
         )
+        # accelerator.init_trackers(
+        #     project_name="flow-grpo",
+        #     config=config.to_dict(),
+        #     init_kwargs={"wandb": {"name": config.run_name}},
+        # )
     logger.info(f"\n{config}")
 
     # set seed (device_specific is very important to get different prompts on different devices)
@@ -428,14 +406,13 @@ def main(_):
     elif accelerator.mixed_precision == "bf16":
         inference_dtype = torch.bfloat16
 
-    # Move transformer, vae and text_encoder to device and cast to inference_dtype
+    # Move vae and text_encoder to device and cast to inference_dtype
     pipeline.vae.to(accelerator.device, dtype=torch.float32)
     pipeline.text_encoder.to(accelerator.device, dtype=inference_dtype)
     pipeline.text_encoder_2.to(accelerator.device, dtype=inference_dtype)
     pipeline.text_encoder_3.to(accelerator.device, dtype=inference_dtype)
-    if config.use_lora:
-        # pipeline.transformer.to(accelerator.device, dtype=inference_dtype)
-        pipeline.transformer.to(accelerator.device)
+    
+    pipeline.transformer.to(accelerator.device)
 
     if config.use_lora:
         # Set correct lora layers
@@ -457,14 +434,14 @@ def main(_):
         )
         if config.train.lora_path:
             pipeline.transformer = PeftModel.from_pretrained(pipeline.transformer, config.train.lora_path)
-            # 使用PeftModel.from_pretrained load后所有参数的requires_grad都是False，需要set_adapter来使得adapter参数梯度为True
+            # After loading with PeftModel.from_pretrained, all parameters have requires_grad set to False. You need to call set_adapter to enable gradients for the adapter parameters.
             pipeline.transformer.set_adapter("default")
         else:
             pipeline.transformer = get_peft_model(pipeline.transformer, transformer_lora_config)
     
     transformer = pipeline.transformer
     transformer_trainable_parameters = list(filter(lambda p: p.requires_grad, transformer.parameters()))
-    # 平均影响到之前的20*8=160个step
+    # This ema setting affects the previous 20 × 8 = 160 steps on average.
     ema = EMAModuleWrapper(transformer_trainable_parameters, decay=0.9, update_step_interval=8, device=accelerator.device)
     
     # Enable TF32 for faster training on Ampere GPUs,
@@ -501,17 +478,17 @@ def main(_):
         train_dataset = TextPromptDataset(config.dataset, 'train')
         test_dataset = TextPromptDataset(config.dataset, 'test')
 
-        # 创建无限循环的DataLoader
+        # Create an infinite-loop DataLoader
         train_sampler = DistributedKRepeatSampler( 
             dataset=train_dataset,
             batch_size=config.sample.train_batch_size,
-            k=config.sample.num_image_per_prompt,  # 你的k值
+            k=config.sample.num_image_per_prompt,
             num_replicas=accelerator.num_processes,
             rank=accelerator.process_index,
             seed=42
         )
 
-        # 创建DataLoader，注意这里不需要shuffle，由Sampler控制
+        # Create a DataLoader; note that shuffling is not needed here because it’s controlled by the Sampler.
         train_dataloader = DataLoader(
             train_dataset,
             batch_sampler=train_sampler,
@@ -519,7 +496,8 @@ def main(_):
             collate_fn=TextPromptDataset.collate_fn,
             # persistent_workers=True
         )
-        # 创建正常的DataLoader
+
+        # Create a regular DataLoader
         test_dataloader = DataLoader(
             test_dataset,
             batch_size=config.sample.test_batch_size,
@@ -531,17 +509,16 @@ def main(_):
     elif config.prompt_fn == "geneval":
         train_dataset = GenevalPromptDataset(config.dataset, 'train')
         test_dataset = GenevalPromptDataset(config.dataset, 'test')
-        # 创建无限循环的DataLoader
+
         train_sampler = DistributedKRepeatSampler( 
             dataset=train_dataset,
             batch_size=config.sample.train_batch_size,
-            k=config.sample.num_image_per_prompt,  # 你的k值
+            k=config.sample.num_image_per_prompt,
             num_replicas=accelerator.num_processes,
             rank=accelerator.process_index,
             seed=42
         )
 
-        # 创建DataLoader，注意这里不需要shuffle，由Sampler控制
         train_dataloader = DataLoader(
             train_dataset,
             batch_sampler=train_sampler,
@@ -549,7 +526,6 @@ def main(_):
             collate_fn=GenevalPromptDataset.collate_fn,
             # persistent_workers=True
         )
-        # 创建正常的DataLoader
         test_dataloader = DataLoader(
             test_dataset,
             batch_size=config.sample.test_batch_size,
@@ -618,16 +594,18 @@ def main(_):
     # assert config.sample.train_batch_size % config.train.batch_size == 0
     # assert samples_per_epoch % total_train_batch_size == 0
 
-    if config.resume_from:
-        logger.info(f"Resuming from {config.resume_from}")
-        accelerator.load_state(config.resume_from)
-        first_epoch = int(config.resume_from.split("_")[-1]) + 1
-    else:
-        first_epoch = 0
+    first_epoch = 0
     global_step = 0
     train_iter = iter(train_dataloader)
 
     for epoch in range(first_epoch, config.num_epochs):
+        #################### EVAL ####################
+        pipeline.transformer.eval()
+        if epoch % config.eval_freq == 0:
+            eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerator, global_step, eval_reward_fn, executor, autocast, num_train_timesteps, ema, transformer_trainable_parameters)
+        if epoch % config.save_freq == 0 and epoch > 0 and accelerator.is_main_process:
+            save_ckpt(config.save_dir, transformer, global_step, accelerator, ema, transformer_trainable_parameters, config)
+
         #################### SAMPLING ####################
         pipeline.transformer.eval()
         samples = []
@@ -651,21 +629,15 @@ def main(_):
             prompt_ids = tokenizers[0](
                 prompts,
                 padding="max_length",
-                max_length=77,
+                max_length=256,
                 truncation=True,
                 return_tensors="pt",
             ).input_ids.to(accelerator.device)
-            if i==0 and epoch % config.eval_freq == 0 and epoch>0:
-                eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerator, global_step, eval_reward_fn, executor, autocast, num_train_timesteps, ema, transformer_trainable_parameters)
-            if i==0 and epoch % config.save_freq == 0 and epoch>0 and accelerator.is_main_process:
-                save_ckpt(config.save_dir, transformer, global_step, accelerator, ema, transformer_trainable_parameters, config)
-            # 这里是故意的，因为前两个epoch收集的group size会有bug,经过两个epoch后，group_size稳定成指定的
-            if epoch < 2:
-                continue
+
             # sample
             with autocast():
                 with torch.no_grad():
-                    images, latents, log_probs, kls = pipeline_with_logprob(
+                    images, latents, log_probs = pipeline_with_logprob(
                         pipeline,
                         prompt_embeds=prompt_embeds,
                         pooled_prompt_embeds=pooled_prompt_embeds,
@@ -674,18 +646,15 @@ def main(_):
                         num_inference_steps=config.sample.num_steps,
                         guidance_scale=config.sample.guidance_scale,
                         output_type="pt",
-                        return_dict=False,
                         height=config.resolution,
                         width=config.resolution, 
-                        kl_reward=config.sample.kl_reward,
+                        noise_level=config.sample.noise_level,
                 )
 
             latents = torch.stack(
                 latents, dim=1
             )  # (batch_size, num_steps + 1, 16, 96, 96)
             log_probs = torch.stack(log_probs, dim=1)  # shape after stack (batch_size, num_steps)
-            kls = torch.stack(kls, dim=1) 
-            kl = kls.detach()
 
             timesteps = pipeline.scheduler.timesteps.repeat(
                 config.sample.train_batch_size, 1
@@ -709,13 +678,10 @@ def main(_):
                         :, 1:
                     ],  # each entry is the latent after timestep t
                     "log_probs": log_probs,
-                    "kl": kl,
                     "rewards": rewards,
                 }
             )
 
-        if epoch < 2:
-            continue
         # wait for all rewards to be computed
         for sample in tqdm(
             samples,
@@ -758,7 +724,7 @@ def main(_):
                 sampled_prompts = [prompts[i] for i in sample_indices]
                 sampled_rewards = [rewards['avg'][i] for i in sample_indices]
 
-                accelerator.log(
+                wandb.log(
                     {
                         "images": [
                             wandb.Image(
@@ -771,20 +737,20 @@ def main(_):
                     step=global_step,
                 )
         samples["rewards"]["ori_avg"] = samples["rewards"]["avg"]
-        samples["rewards"]["avg"] = samples["rewards"]["avg"].unsqueeze(-1) - config.sample.kl_reward*samples["kl"]
+        # The purpose of repeating `adv` along the timestep dimension here is to make it easier to introduce timestep-dependent advantages later, such as adding a KL reward.
+        samples["rewards"]["avg"] = samples["rewards"]["avg"].unsqueeze(1).repeat(1, num_train_timesteps)
         # gather rewards across processes
         gathered_rewards = {key: accelerator.gather(value) for key, value in samples["rewards"].items()}
         gathered_rewards = {key: value.cpu().numpy() for key, value in gathered_rewards.items()}
         # log rewards and images
-        accelerator.log(
-            {
-                "epoch": epoch,
-                **{f"reward_{key}": value.mean() for key, value in gathered_rewards.items() if '_strict_accuracy' not in key and '_accuracy' not in key},
-                "kl": samples["kl"].mean().cpu().numpy(),
-                "kl_abs": samples["kl"].abs().mean().cpu().numpy()
-            },
-            step=global_step,
-        )
+        if accelerator.is_main_process:
+            wandb.log(
+                {
+                    "epoch": epoch,
+                    **{f"reward_{key}": value.mean() for key, value in gathered_rewards.items() if '_strict_accuracy' not in key and '_accuracy' not in key},
+                },
+                step=global_step,
+            )
 
         # per-prompt mean/std tracking
         if config.per_prompt_stat_tracking:
@@ -800,16 +766,18 @@ def main(_):
 
             group_size, trained_prompt_num = stat_tracker.get_stats()
 
-            zero_std_ratio = calculate_zero_std_ratio(prompts, gathered_rewards)
+            zero_std_ratio, reward_std_mean = calculate_zero_std_ratio(prompts, gathered_rewards)
 
-            accelerator.log(
-                {
-                    "group_size": group_size,
-                    "trained_prompt_num": trained_prompt_num,
-                    "zero_std_ratio": zero_std_ratio,
-                },
-                step=global_step,
-            )
+            if accelerator.is_main_process:
+                wandb.log(
+                    {
+                        "group_size": group_size,
+                        "trained_prompt_num": trained_prompt_num,
+                        "zero_std_ratio": zero_std_ratio,
+                        "reward_std_mean": reward_std_mean,
+                    },
+                    step=global_step,
+                )
             stat_tracker.clear()
         else:
             advantages = (gathered_rewards['avg'] - gathered_rewards['avg'].mean()) / (gathered_rewards['avg'].std() + 1e-4)
@@ -822,7 +790,6 @@ def main(_):
         )
         if accelerator.is_local_main_process:
             print("advantages: ", samples["advantages"].abs().mean())
-            print("kl: ", samples["kl"].mean())
 
         del samples["rewards"]
         del samples["prompt_ids"]
@@ -840,12 +807,13 @@ def main(_):
             if len(false_indices) >= num_to_change:
                 random_indices = torch.randperm(len(false_indices))[:num_to_change]
                 mask[false_indices[random_indices]] = True
-        accelerator.log(
-            {
-                "actual_batch_size": mask.sum().item()//config.sample.num_batches_per_epoch,
-            },
-            step=global_step,
-        )
+        if accelerator.is_main_process:
+            wandb.log(
+                {
+                    "actual_batch_size": mask.sum().item()//config.sample.num_batches_per_epoch,
+                },
+                step=global_step,
+            )
         # Filter out samples where the entire time dimension of advantages is zero
         samples = {k: v[mask] for k, v in samples.items()}
 
@@ -860,22 +828,7 @@ def main(_):
         for inner_epoch in range(config.train.num_inner_epochs):
             # shuffle samples along batch dimension
             perm = torch.randperm(total_batch_size, device=accelerator.device)
-            # perm = torch.arange(total_batch_size, device=accelerator.device)
             samples = {k: v[perm] for k, v in samples.items()}
-
-            # shuffle along time dimension independently for each sample
-            perms = torch.stack(
-                [
-                    # torch.randperm(num_timesteps, device=accelerator.device)
-                    torch.arange(num_timesteps, device=accelerator.device)
-                    for _ in range(total_batch_size)
-                ]
-            )
-            for key in ["timesteps", "latents", "next_latents", "log_probs"]:
-                samples[key] = samples[key][
-                    torch.arange(total_batch_size, device=accelerator.device)[:, None],
-                    perms,
-                ]
 
             # rebatch for training
             samples_batched = {
@@ -957,6 +910,20 @@ def main(_):
                                 ).float()
                             )
                         )
+                        info["clipfrac_gt_one"].append(
+                            torch.mean(
+                                (
+                                    ratio - 1.0 > config.train.clip_range
+                                ).float()
+                            )
+                        )
+                        info["clipfrac_lt_one"].append(
+                            torch.mean(
+                                (
+                                    1.0 - ratio > config.train.clip_range
+                                ).float()
+                            )
+                        )
                         info["policy_loss"].append(policy_loss)
                         if config.train.beta > 0:
                             info["kl_loss"].append(kl_loss)
@@ -981,7 +948,8 @@ def main(_):
                         info = {k: torch.mean(torch.stack(v)) for k, v in info.items()}
                         info = accelerator.reduce(info, reduction="mean")
                         info.update({"epoch": epoch, "inner_epoch": inner_epoch})
-                        accelerator.log(info, step=global_step)
+                        if accelerator.is_main_process:
+                            wandb.log(info, step=global_step)
                         global_step += 1
                         info = defaultdict(list)
                 if config.train.ema:

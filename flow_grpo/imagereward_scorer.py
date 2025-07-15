@@ -29,7 +29,7 @@ def main():
     ]
     pil_images = [Image.open(img) for img in images]
     prompts=[
-        # 'A astronaut’s glove floating in zero-g with "NASA 2049" on the wrist',
+        'A astronaut’s glove floating in zero-g with "NASA 2049" on the wrist',
     ]
     print(scorer(prompts, pil_images))
 

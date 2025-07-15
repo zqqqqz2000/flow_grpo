@@ -8,7 +8,6 @@
 </div>
 
 ## 📝 Updates
-
 - __[2025.05.15]__: 🔥We showcase image examples from three tasks and their training evolution at https://gongyeliu.github.io/Flow-GRPO. Check them out!
 - __[2025.05.13]__: 🔥We now provide an online demo for all three tasks at https://huggingface.co/spaces/jieliu/SD3.5-M-Flow-GRPO. You're welcome to try it out!
 
@@ -62,9 +61,10 @@ python -m sglang.launch_server --model-path CodeGoat24/UnifiedReward-7b-v1.5 --a
 ```
 
 ### 3. Start Training
+#### GRPO
 Single-node training:
 ```bash
-bash scripts/single_node/main.sh
+bash scripts/single_node/grpo.sh
 ```
 Multi-node training:
 ```bash
@@ -73,7 +73,19 @@ bash scripts/multi_node/main.sh
 # Other nodes
 bash scripts/multi_node/main1.sh
 bash scripts/multi_node/main2.sh
+bash scripts/multi_node/main3.sh
 ```
+#### DPO / OnlineDPO / SFT / OnlineSFT
+ Single-node training:
+```bash
+bash scripts/single_node/dpo.sh
+bash scripts/single_node/sft.sh
+```
+Multi-node training:
+
+Please update the entry Python script and config file names in the `scripts/multi_node` bash file.
+
+
 ## 🏁 Multi Reward Training
 For multi-reward settings, you can pass in a dictionary where each key is a reward name and the corresponding value is its weight.
 For example:
@@ -101,21 +113,18 @@ The following reward models are currently supported:
 
         
 ## ✨ Important Hyperparameters
-You can adjust the parameters in `config/dgx.py` to tune different hyperparameters. An empirical finding is that `config.sample.train_batch_size * num_gpu / config.sample.num_image_per_prompt * config.sample.num_batches_per_epoch = 48`, i.e., `group_number=48`, `group_size=24`.
-Additionally, setting `config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch // 2` also yields good performance.
+You can adjust the parameters in `config/grpo.py` to tune different hyperparameters. An empirical finding is that `config.sample.train_batch_size * num_gpu / config.sample.num_image_per_prompt * config.sample.num_batches_per_epoch = 48`, i.e., `group_number=48`, `group_size=24`.
+Additionally, setting `config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch // 2`.
 
 ## 🤗 Acknowledgement
 This repo is based on [ddpo-pytorch](https://github.com/kvablack/ddpo-pytorch) and [diffusers](https://github.com/huggingface/diffusers). We thank the authors for their valuable contributions to the AIGC community. Special thanks to Kevin Black for the excellent *ddpo-pytorch* repo.
 
 ## ⭐Citation
 ```
-@misc{liu2025flowgrpo,
-      title={Flow-GRPO: Training Flow Matching Models via Online RL}, 
-      author={Jie Liu and Gongye Liu and Jiajun Liang and Yangguang Li and Jiaheng Liu and Xintao Wang and Pengfei Wan and Di Zhang and Wanli Ouyang},
-      year={2025},
-      eprint={2505.05470},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV},
-      url={https://arxiv.org/abs/2505.05470}, 
+@article{liu2025flow,
+  title={Flow-grpo: Training flow matching models via online rl},
+  author={Liu, Jie and Liu, Gongye and Liang, Jiajun and Li, Yangguang and Liu, Jiaheng and Wang, Xintao and Wan, Pengfei and Zhang, Di and Ouyang, Wanli},
+  journal={arXiv preprint arXiv:2505.05470},
+  year={2025}
 }
 ```

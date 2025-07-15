@@ -18,10 +18,10 @@ unique_text_dataset = unique_dataset[:test_size]
 train_dataset = unique_dataset[test_size:]
 
 # Save the datasets with shuffling
-with open("/m2v_intern/liujie/research/ddpo-pytorch/dataset/pickscore/train.txt", "w", encoding="utf-8") as file:
+with open("/m2v_intern/liujie/research/flow_grpo/dataset/pickscore/train.txt", "w", encoding="utf-8") as file:
     for line in train_dataset:
         file.write(line + "\n")
 
-with open("/m2v_intern/liujie/research/ddpo-pytorch/dataset/pickscore/test.txt", "w", encoding="utf-8") as file:
+with open("/m2v_intern/liujie/research/flow_grpo/dataset/pickscore/test.txt", "w", encoding="utf-8") as file:
     for line in unique_text_dataset:
         file.write(line + "\n")
