@@ -1,11 +1,12 @@
-from importlib import resources
-import os
 import functools
+import os
 import random
+from importlib import resources
+
 # import inflect
 
 # IE = inflect.engine()
-IE=None
+IE = None
 ASSETS_PATH = resources.files("flow_grpo.assets")
 
 
@@ -44,16 +45,19 @@ def imagenet_dogs():
 def simple_animals():
     return from_file("simple_animals.txt")
 
+
 def general_ocr():
     return from_file("general_ocr_train.txt")
+
 
 def simple_ocr_animals():
     animals = _load_lines("simple_ocr_animals.txt")
     # random_number = random.randint(100, 999)
     # random_number = ''.join([str(random.randint(0, 9)) for _ in range(10)])
-    num=random.randint(1, 9)
-    random_number = ''.join([str(6) for _ in range(num)])
+    num = random.randint(1, 9)
+    random_number = "".join([str(6) for _ in range(num)])
     return f'A {random.choice(animals)} holding a sign that says "{random_number}"', {}
+
 
 def nouns_activities(nouns_file, activities_file):
     nouns = _load_lines(nouns_file)

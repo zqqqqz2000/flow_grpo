@@ -1,11 +1,12 @@
 # Based on https://github.com/christophschuhmann/improved-aesthetic-predictor/blob/fe88a163f4661b4ddabba0751ff645e2e620746e/simple_inference.py
 
 from importlib import resources
+
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
-from transformers import CLIPModel, CLIPProcessor
 from PIL import Image
+from transformers import CLIPModel, CLIPProcessor
 
 ASSETS_PATH = resources.files("flow_grpo.assets")
 
@@ -35,9 +36,7 @@ class AestheticScorer(torch.nn.Module):
         self.clip = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
         self.mlp = MLP()
-        state_dict = torch.load(
-            ASSETS_PATH.joinpath("sac+logos+ava1-l14-linearMSE.pth")
-        )
+        state_dict = torch.load(ASSETS_PATH.joinpath("sac+logos+ava1-l14-linearMSE.pth"))
         self.mlp.load_state_dict(state_dict)
         self.dtype = dtype
         self.eval()

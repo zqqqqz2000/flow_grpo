@@ -105,7 +105,7 @@ def get_config():
     ###### Reward Function ######
     # reward function to use. see `rewards.py` for available reward functions.
     config.reward_fn = ml_collections.ConfigDict()
-    config.save_dir = ''
+    config.save_dir = ""
 
     ###### Per-Prompt Stat Tracking ######
     config.per_prompt_stat_tracking = True

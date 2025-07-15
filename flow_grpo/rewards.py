@@ -1,8 +1,10 @@
-from PIL import Image
 import io
+from collections import defaultdict
+
 import numpy as np
 import torch
-from collections import defaultdict
+from PIL import Image
+
 
 def jpeg_incompressibility():
     def _fn(images, prompts, metadata):
@@ -24,9 +26,10 @@ def jpeg_compressibility():
 
     def _fn(images, prompts, metadata):
         rew, meta = jpeg_fn(images, prompts, metadata)
-        return -rew/500, meta
+        return -rew / 500, meta
 
     return _fn
+
 
 def aesthetic_score():
     from flow_grpo.aesthetic_scorer import AestheticScorer
@@ -44,19 +47,6 @@ def aesthetic_score():
 
     return _fn
 
-def clip_score():
-    from flow_grpo.clip_scorer import ClipScorer
-
-    scorer = ClipScorer(dtype=torch.float32).cuda()
-
-    def _fn(images, prompts, metadata):
-        if not isinstance(images, torch.Tensor):
-            images = images.transpose(0, 3, 1, 2)  # NHWC -> NCHW
-            images = torch.tensor(images, dtype=torch.uint8)/255.0
-        scores = scorer(images, prompts)
-        return scores, {}
-
-    return _fn
 
 def pickscore_score(device):
     from flow_grpo.pickscore_scorer import PickScoreScorer
@@ -72,6 +62,7 @@ def pickscore_score(device):
         return scores, {}
 
     return _fn
+
 
 def imagereward_score(device):
     from flow_grpo.imagereward_scorer import ImageRewardScorer
@@ -89,6 +80,7 @@ def imagereward_score(device):
 
     return _fn
 
+
 def qwenvl_score(device):
     from flow_grpo.qwenvl import QwenVLScorer
 
@@ -105,7 +97,7 @@ def qwenvl_score(device):
 
     return _fn
 
-    
+
 def ocr_score(device):
     from flow_grpo.ocr import OcrScorer
 
@@ -123,19 +115,17 @@ def ocr_score(device):
 
 
 def deqa_score_remote(device):
-    """Submits images to DeQA and computes a reward.
-    """
+    """Submits images to DeQA and computes a reward."""
+    import pickle
+    from io import BytesIO
+
     import requests
     from requests.adapters import HTTPAdapter, Retry
-    from io import BytesIO
-    import pickle
 
     batch_size = 64
     url = "http://127.0.0.1:18086"
     sess = requests.Session()
-    retries = Retry(
-        total=1000, backoff_factor=1, status_forcelist=[500], allowed_methods=False
-    )
+    retries = Retry(total=1000, backoff_factor=1, status_forcelist=[500], allowed_methods=False)
     sess.mount("http://", HTTPAdapter(max_retries=retries))
 
     def _fn(images, prompts, metadata):
@@ -171,20 +161,19 @@ def deqa_score_remote(device):
 
     return _fn
 
+
 def geneval_score(device):
-    """Submits images to GenEval and computes a reward.
-    """
+    """Submits images to GenEval and computes a reward."""
+    import pickle
+    from io import BytesIO
+
     import requests
     from requests.adapters import HTTPAdapter, Retry
-    from io import BytesIO
-    import pickle
 
     batch_size = 64
     url = "http://127.0.0.1:18085"
     sess = requests.Session()
-    retries = Retry(
-        total=1000, backoff_factor=1, status_forcelist=[500], allowed_methods=False
-    )
+    retries = Retry(total=1000, backoff_factor=1, status_forcelist=[500], allowed_methods=False)
     sess.mount("http://", HTTPAdapter(max_retries=retries))
 
     def _fn(images, prompts, metadatas, only_strict):
@@ -242,20 +231,19 @@ def geneval_score(device):
 
     return _fn
 
+
 def unifiedreward_score_remote(device):
-    """Submits images to DeQA and computes a reward.
-    """
+    """Submits images to DeQA and computes a reward."""
+    import pickle
+    from io import BytesIO
+
     import requests
     from requests.adapters import HTTPAdapter, Retry
-    from io import BytesIO
-    import pickle
 
     batch_size = 64
     url = "http://10.82.120.15:18085"
     sess = requests.Session()
-    retries = Retry(
-        total=1000, backoff_factor=1, status_forcelist=[500], allowed_methods=False
-    )
+    retries = Retry(total=1000, backoff_factor=1, status_forcelist=[500], allowed_methods=False)
     sess.mount("http://", HTTPAdapter(max_retries=retries))
 
     def _fn(images, prompts, metadata):
@@ -277,10 +265,7 @@ def unifiedreward_score_remote(device):
                 jpeg_images.append(buffer.getvalue())
 
             # format for LLaVA server
-            data = {
-                "images": jpeg_images,
-                "prompts": prompt_batch
-            }
+            data = {"images": jpeg_images, "prompts": prompt_batch}
             data_bytes = pickle.dumps(data)
 
             # send a request to the llava server
@@ -295,12 +280,14 @@ def unifiedreward_score_remote(device):
 
     return _fn
 
+
 def unifiedreward_score_sglang(device):
     import asyncio
-    from openai import AsyncOpenAI
     import base64
+    import re
     from io import BytesIO
-    import re 
+
+    from openai import AsyncOpenAI
 
     def pil_image_to_base64(image):
         buffered = BytesIO()
@@ -324,9 +311,9 @@ def unifiedreward_score_sglang(device):
         return scores
 
     client = AsyncOpenAI(base_url="http://127.0.0.1:17140/v1", api_key="flowgrpo")
-        
+
     async def evaluate_image(prompt, image):
-        question = f"<image>\nYou are given a text caption and a generated image based on that caption. Your task is to evaluate this image based on two key criteria:\n1. Alignment with the Caption: Assess how well this image aligns with the provided caption. Consider the accuracy of depicted objects, their relationships, and attributes as described in the caption.\n2. Overall Image Quality: Examine the visual quality of this image, including clarity, detail preservation, color accuracy, and overall aesthetic appeal.\nBased on the above criteria, assign a score from 1 to 5 after \'Final Score:\'.\nYour task is provided as follows:\nText Caption: [{prompt}]"
+        question = f"<image>\nYou are given a text caption and a generated image based on that caption. Your task is to evaluate this image based on two key criteria:\n1. Alignment with the Caption: Assess how well this image aligns with the provided caption. Consider the accuracy of depicted objects, their relationships, and attributes as described in the caption.\n2. Overall Image Quality: Examine the visual quality of this image, including clarity, detail preservation, color accuracy, and overall aesthetic appeal.\nBased on the above criteria, assign a score from 1 to 5 after 'Final Score:'.\nYour task is provided as follows:\nText Caption: [{prompt}]"
         images_base64 = pil_image_to_base64(image)
         response = await client.chat.completions.create(
             model="UnifiedReward-7b-v1.5",
@@ -359,17 +346,18 @@ def unifiedreward_score_sglang(device):
         if isinstance(images, torch.Tensor):
             images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
             images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
-        
+
         # 转换为PIL Image并调整尺寸
         images = [Image.fromarray(image).resize((512, 512)) for image in images]
 
         # 执行异步批量评估
         text_outputs = asyncio.run(evaluate_batch_image(images, prompts))
         score = _extract_scores(text_outputs)
-        score = [sc/5.0 for sc in score]
+        score = [sc / 5.0 for sc in score]
         return score, {}
-    
+
     return _fn
+
 
 def multi_score(device, score_dict):
     score_functions = {
@@ -384,38 +372,45 @@ def multi_score(device, score_dict):
         "geneval": geneval_score,
         "clipscore": clip_score,
     }
-    score_fns={}
+    score_fns = {}
     for score_name, weight in score_dict.items():
-        score_fns[score_name] = score_functions[score_name](device) if 'device' in score_functions[score_name].__code__.co_varnames else score_functions[score_name]()
+        score_fns[score_name] = (
+            score_functions[score_name](device)
+            if "device" in score_functions[score_name].__code__.co_varnames
+            else score_functions[score_name]()
+        )
 
     # only_strict is only for geneval. During training, only the strict reward is needed, and non-strict rewards don't need to be computed, reducing reward calculation time.
     def _fn(images, prompts, metadata, only_strict=True):
         total_scores = []
         score_details = {}
-        
+
         for score_name, weight in score_dict.items():
             if score_name == "geneval":
-                scores, rewards, strict_rewards, group_rewards, group_strict_rewards = score_fns[score_name](images, prompts, metadata, only_strict)
-                score_details['accuracy'] = rewards
-                score_details['strict_accuracy'] = strict_rewards
+                scores, rewards, strict_rewards, group_rewards, group_strict_rewards = score_fns[score_name](
+                    images, prompts, metadata, only_strict
+                )
+                score_details["accuracy"] = rewards
+                score_details["strict_accuracy"] = strict_rewards
                 for key, value in group_strict_rewards.items():
-                    score_details[f'{key}_strict_accuracy'] = value
+                    score_details[f"{key}_strict_accuracy"] = value
                 for key, value in group_rewards.items():
-                    score_details[f'{key}_accuracy'] = value
+                    score_details[f"{key}_accuracy"] = value
             else:
                 scores, rewards = score_fns[score_name](images, prompts, metadata)
             score_details[score_name] = scores
             weighted_scores = [weight * score for score in scores]
-            
+
             if not total_scores:
                 total_scores = weighted_scores
             else:
                 total_scores = [total + weighted for total, weighted in zip(total_scores, weighted_scores)]
-        
-        score_details['avg'] = total_scores
+
+        score_details["avg"] = total_scores
         return score_details, {}
 
     return _fn
+
 
 def main():
     import torchvision.transforms as transforms
@@ -424,18 +419,18 @@ def main():
         "nasa.jpg",
     ]
 
-    transform = transforms.Compose([
-        transforms.ToTensor(),  # Convert to tensor
-    ])
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),  # Convert to tensor
+        ]
+    )
 
-    images = torch.stack([transform(Image.open(image_path).convert('RGB')) for image_path in image_paths])
-    prompts=[
+    images = torch.stack([transform(Image.open(image_path).convert("RGB")) for image_path in image_paths])
+    prompts = [
         'A astronaut’s glove floating in zero-g with "NASA 2049" on the wrist',
     ]
     metadata = {}  # Example metadata
-    score_dict = {
-        "unifiedreward": 1.0
-    }
+    score_dict = {"unifiedreward": 1.0}
     # Initialize the multi_score function with a device and score_dict
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     scoring_fn = multi_score(device, score_dict)
