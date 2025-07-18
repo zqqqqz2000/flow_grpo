@@ -13,8 +13,11 @@ class ImageRewardScorer(torch.nn.Module):
         self.model.requires_grad_(False)
         
     @torch.no_grad()
-    def __call__(self, prompt, images):
-        _, rewards = self.model.inference_rank(prompt, images)
+    def __call__(self, prompts, images):
+        rewards = []
+        for prompt,image in zip(prompts, images):
+            _, reward = self.model.inference_rank(prompt, [image])
+            rewards.append(reward)
         return rewards
 
 # Usage example

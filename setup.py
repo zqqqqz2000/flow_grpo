@@ -48,6 +48,7 @@ setup(
         "absl-py",
         "ml_collections",
         "sentencepiece",
+        "openai",
     ],
     extras_require={
         "dev": [

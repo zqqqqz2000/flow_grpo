@@ -53,11 +53,21 @@ PickScore requires no additional installation.
 Please create a new Conda virtual environment and install the corresponding dependencies according to the instructions in [reward-server](https://github.com/yifan123/reward-server).
 
 #### UnifiedReward
-We use sglang to deploy the reward service, and we also recommend using sglang or vllm for deploying VLM-based reward models.
-After installing sglang, please run the following command to launch UnifiedReward:
-
+Since `sglang` may conflict with other environments, we recommend creating a new conda environment.
+```bash
+conda create -n sglang python=3.10.16
+conda activate sglang
+pip install "sglang[all]"
+```
+We use sglang to deploy the reward service. After installing sglang, please run the following command to launch UnifiedReward:
 ```bash
 python -m sglang.launch_server --model-path CodeGoat24/UnifiedReward-7b-v1.5 --api-key flowgrpo --port 17140 --chat-template chatml-llava --enable-p2p-check --mem-fraction-static 0.85
+```
+#### ImageReward
+Please install imagereward:
+```bash
+pip install image-reward
+pip install git+https://github.com/openai/CLIP.git
 ```
 
 ### 3. Start Training
