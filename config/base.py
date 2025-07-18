@@ -11,9 +11,6 @@ def get_config():
     config.seed = 42
     # top-level logging directory for checkpoint saving.
     config.logdir = "logs"
-    # number of epochs to train for. each epoch is one round of sampling from the model followed by training on those
-    # samples.
-    config.num_epochs = 100
     # number of epochs between saving model checkpoints.
     config.save_freq = 20
     # number of epochs between evaluating the model.

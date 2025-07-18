@@ -10,7 +10,6 @@ def compressibility():
     config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
     config.dataset = os.path.join(os.getcwd(), "dataset/pickscore")
 
-    config.num_epochs = 100
     config.use_lora = True
 
     config.sample.batch_size = 8
@@ -55,7 +54,6 @@ def general_ocr_sd3():
     config.sample.global_std = True
     config.train.ema = True
     # A large num_epochs is intentionally set here. Training will be manually stopped once sufficient
-    config.num_epochs = 100000
     config.save_freq = 60 # epoch
     config.eval_freq = 60
     config.save_dir = 'logs/ocr/sd3.5-M'
@@ -93,7 +91,6 @@ def geneval_sd3():
     config.train.beta = 0.04
     config.sample.global_std = True
     config.train.ema = True
-    config.num_epochs = 100000
     config.save_freq = 60 # epoch
     config.eval_freq = 60
     config.save_dir = f'logs/geneval/sd3.5-M'
@@ -131,7 +128,6 @@ def pickscore_sd3():
     config.train.beta = 0.01
     config.sample.global_std = True
     config.train.ema = True
-    config.num_epochs = 100000
     config.save_freq = 60 # epoch
     config.eval_freq = 60
     config.save_dir = 'logs/pickscore/sd3.5-M'
@@ -172,7 +168,6 @@ def general_ocr_sd3_4gpu():
     config.sample.global_std = True
     config.train.ema = True
     # A large num_epochs is intentionally set here. Training will be manually stopped once sufficient
-    config.num_epochs = 100000
     config.save_freq = 60 # epoch
     config.eval_freq = 60
     config.save_dir = 'logs/ocr/sd3.5-M'
@@ -211,7 +206,6 @@ def pickscore_sd3_4gpu():
     config.train.beta = 0.01
     config.sample.global_std = True
     config.train.ema = True
-    config.num_epochs = 100000
     config.save_freq = 60 # epoch
     config.eval_freq = 60
     config.save_dir = 'logs/pickscore/sd3.5-M'
@@ -251,8 +245,6 @@ def general_ocr_sd3_1gpu():
     # Whether to use the std of all samples or the current group's.
     config.sample.global_std = True
     config.train.ema = True
-    # A large num_epochs is intentionally set here. Training will be manually stopped once sufficient
-    config.num_epochs = 100000
     config.save_freq = 60 # epoch
     config.eval_freq = 60
     config.save_dir = 'logs/ocr/sd3.5-M'

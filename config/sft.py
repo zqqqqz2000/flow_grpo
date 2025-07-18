@@ -10,7 +10,6 @@ def compressibility():
     config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
     config.dataset = os.path.join(os.getcwd(), "dataset/pickscore")
 
-    config.num_epochs = 100
     config.use_lora = True
 
     config.sample.batch_size = 8
@@ -54,7 +53,6 @@ def geneval_sd3():
     config.train.beta = 100
     config.sample.global_std=True
     config.train.ema=True
-    config.num_epochs = 100000
     config.save_freq = 40 # epoch
     config.eval_freq = 40
     config.save_dir = 'logs/geneval/sd3.5-M-sft'
@@ -94,7 +92,6 @@ def pickscore_sd3():
     config.train.beta = 100   
     config.sample.global_std=True
     config.train.ema=True
-    config.num_epochs = 100000
     config.save_freq = 60 # epoch
     config.eval_freq = 60
     config.save_dir = 'logs/pickscore/sd3.5-M-sft'

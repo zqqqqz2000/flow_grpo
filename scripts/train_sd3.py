@@ -575,7 +575,6 @@ def main(_):
     )
 
     logger.info("***** Running training *****")
-    logger.info(f"  Num Epochs = {config.num_epochs}")
     logger.info(f"  Sample batch size per device = {config.sample.train_batch_size}")
     logger.info(f"  Train batch size per device = {config.train.batch_size}")
     logger.info(
@@ -594,11 +593,11 @@ def main(_):
     # assert config.sample.train_batch_size % config.train.batch_size == 0
     # assert samples_per_epoch % total_train_batch_size == 0
 
-    first_epoch = 0
+    epoch = 0
     global_step = 0
     train_iter = iter(train_dataloader)
 
-    for epoch in range(first_epoch, config.num_epochs):
+    while True:
         #################### EVAL ####################
         pipeline.transformer.eval()
         if epoch % config.eval_freq == 0:
@@ -956,6 +955,8 @@ def main(_):
                     ema.step(transformer_trainable_parameters, global_step)
             # make sure we did an optimization step at the end of the inner epoch
             # assert accelerator.sync_gradients
+        
+        epoch+=1
         
 if __name__ == "__main__":
     app.run(main)
