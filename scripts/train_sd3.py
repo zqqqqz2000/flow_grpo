@@ -290,140 +290,6 @@ def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, co
         return prev_sample, log_prob, prev_sample_mean, std_dev_t
 
 
-def eval(
-    pipeline,
-    test_dataloader,
-    text_encoders,
-    tokenizers,
-    config,
-    accelerator,
-    global_step,
-    reward_fn,
-    executor,
-    autocast,
-    num_train_timesteps,
-    ema,
-    transformer_trainable_parameters,
-    is_sdxl=False,
-):
-    if config.train.ema:
-        ema.copy_ema_to(transformer_trainable_parameters, store_temp=True)
-    neg_prompt_embed, neg_pooled_prompt_embed = compute_text_embeddings(
-        [""], text_encoders, tokenizers, max_sequence_length=128, device=accelerator.device
-    )
-
-    sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.test_batch_size, 1, 1)
-    sample_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(config.sample.test_batch_size, 1)
-
-    # test_dataloader = itertools.islice(test_dataloader, 2)
-    all_rewards = defaultdict(list)
-    for test_batch in tqdm(
-        test_dataloader,
-        desc="Eval: ",
-        disable=not accelerator.is_local_main_process,
-        position=0,
-    ):
-        prompts, prompt_metadata = test_batch
-        prompt_embeds, pooled_prompt_embeds = compute_text_embeddings(
-            prompts,
-            text_encoders,
-            tokenizers,
-            max_sequence_length=128,
-            device=accelerator.device,
-            is_sdxl=is_sdxl,
-            pipeline=pipeline,
-        )
-        # The last batch may not be full batch_size
-        if len(prompt_embeds) < len(sample_neg_prompt_embeds):
-            sample_neg_prompt_embeds = sample_neg_prompt_embeds[: len(prompt_embeds)]
-            sample_neg_pooled_prompt_embeds = sample_neg_pooled_prompt_embeds[: len(prompt_embeds)]
-        with autocast():
-            with torch.no_grad():
-                if is_sdxl:
-                    images, _, _ = sdxl_pipeline_with_logprob(
-                        pipeline,
-                        prompt_embeds=prompt_embeds,
-                        pooled_prompt_embeds=pooled_prompt_embeds,
-                        negative_prompt_embeds=sample_neg_prompt_embeds,
-                        negative_pooled_prompt_embeds=sample_neg_pooled_prompt_embeds,
-                        num_inference_steps=config.sample.eval_num_steps,
-                        guidance_scale=config.sample.guidance_scale,
-                        output_type="pt",
-                        height=config.resolution,
-                        width=config.resolution,
-                    )
-                else:
-                    images, _, _ = sd3_pipeline_with_logprob(
-                        pipeline,
-                        prompt_embeds=prompt_embeds,
-                        pooled_prompt_embeds=pooled_prompt_embeds,
-                        negative_prompt_embeds=sample_neg_prompt_embeds,
-                        negative_pooled_prompt_embeds=sample_neg_pooled_prompt_embeds,
-                        num_inference_steps=config.sample.eval_num_steps,
-                        guidance_scale=config.sample.guidance_scale,
-                        output_type="pt",
-                        height=config.resolution,
-                        width=config.resolution,
-                        noise_level=0,
-                    )
-        rewards = executor.submit(reward_fn, images, prompts, prompt_metadata)
-        # yield to to make sure reward computation starts
-        time.sleep(0)
-        rewards, reward_metadata = rewards.result()
-
-        # Simplified reward handling for unifiedreward
-        rewards_gather = accelerator.gather(torch.as_tensor(rewards, device=accelerator.device)).cpu().numpy()
-        all_rewards["avg"].append(rewards_gather)
-
-    last_batch_images_gather = accelerator.gather(torch.as_tensor(images, device=accelerator.device)).cpu().numpy()
-    last_batch_prompt_ids = tokenizers[0](
-        prompts,
-        padding="max_length",
-        max_length=256,
-        truncation=True,
-        return_tensors="pt",
-    ).input_ids.to(accelerator.device)
-    last_batch_prompt_ids_gather = accelerator.gather(last_batch_prompt_ids).cpu().numpy()
-    last_batch_prompts_gather = pipeline.tokenizer.batch_decode(last_batch_prompt_ids_gather, skip_special_tokens=True)
-    last_batch_rewards_gather = {
-        "avg": accelerator.gather(torch.as_tensor(rewards, device=accelerator.device)).cpu().numpy()
-    }
-
-    all_rewards = {key: np.concatenate(value) for key, value in all_rewards.items()}
-    if accelerator.is_main_process:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            num_samples = min(15, len(last_batch_images_gather))
-            # sample_indices = random.sample(range(len(images)), num_samples)
-            sample_indices = range(num_samples)
-            for idx, index in enumerate(sample_indices):
-                image = last_batch_images_gather[index]
-                pil = Image.fromarray((image.transpose(1, 2, 0) * 255).astype(np.uint8))
-                pil = pil.resize((config.resolution, config.resolution))
-                pil.save(os.path.join(tmpdir, f"{idx}.jpg"))
-            sampled_prompts = [last_batch_prompts_gather[index] for index in sample_indices]
-            sampled_rewards = [
-                {k: last_batch_rewards_gather[k][index] for k in last_batch_rewards_gather} for index in sample_indices
-            ]
-            for key, value in all_rewards.items():
-                print(key, value.shape)
-            wandb.log(
-                {
-                    "eval_images": [
-                        wandb.Image(
-                            os.path.join(tmpdir, f"{idx}.jpg"),
-                            caption=f"{prompt:.1000} | "
-                            + " | ".join(f"{k}: {v:.2f}" for k, v in reward.items() if v != -10),
-                        )
-                        for idx, (prompt, reward) in enumerate(zip(sampled_prompts, sampled_rewards))
-                    ],
-                    **{f"eval_reward_{key}": np.mean(value[value != -10]) for key, value in all_rewards.items()},
-                },
-                step=global_step,
-            )
-    if config.train.ema:
-        ema.copy_temp_to(transformer_trainable_parameters)
-
-
 def unwrap_model(model, accelerator):
     model = accelerator.unwrap_model(model)
     model = model._orig_mod if is_compiled_module(model) else model
@@ -626,11 +492,8 @@ def main(_):
 
     # prepare prompt and reward fn - simplified to use only unifiedreward
     reward_fn = getattr(flow_grpo.rewards, "unifiedreward_score_sglang")(accelerator.device)
-    eval_reward_fn = getattr(flow_grpo.rewards, "unifiedreward_score_sglang")(accelerator.device)
 
     train_dataset = SceneDataset("./data/curr_rft_data_20250709.json")
-    # TODO: test datast
-    test_dataset = SceneDataset("./data/curr_rft_data_20250709.json")
 
     # Create an infinite-loop DataLoader
     train_sampler = CurrDistributedSampler(
@@ -651,15 +514,6 @@ def main(_):
         num_workers=1,
         collate_fn=SceneDataset.collate_fn,
         # persistent_workers=True
-    )
-
-    # Create a regular DataLoader
-    test_dataloader = DataLoader(
-        test_dataset,
-        batch_size=config.sample.test_batch_size,
-        collate_fn=SceneDataset.collate_fn,
-        shuffle=False,
-        num_workers=8,
     )
 
     neg_prompt_embed, neg_pooled_prompt_embed = compute_text_embeddings(
@@ -689,9 +543,7 @@ def main(_):
     # autocast = accelerator.autocast
 
     # Prepare everything with our `accelerator`.
-    transformer, optimizer, train_dataloader, test_dataloader = accelerator.prepare(
-        transformer, optimizer, train_dataloader, test_dataloader
-    )
+    transformer, optimizer, train_dataloader = accelerator.prepare(transformer, optimizer, train_dataloader)
 
     # executor to perform callbacks asynchronously. this is beneficial for the llava callbacks which makes a request to a
     # remote server running llava inference.
@@ -723,23 +575,6 @@ def main(_):
     while True:
         #################### EVAL ####################
         pipeline.transformer.eval()
-        if epoch % config.eval_freq == 0:
-            eval(
-                pipeline,
-                test_dataloader,
-                text_encoders,
-                tokenizers,
-                config,
-                accelerator,
-                global_step,
-                eval_reward_fn,
-                executor,
-                autocast,
-                num_train_timesteps,
-                ema,
-                transformer_trainable_parameters,
-                is_sdxl,
-            )
         if epoch % config.save_freq == 0 and epoch > 0 and accelerator.is_main_process:
             save_ckpt(
                 config.save_dir, transformer, global_step, accelerator, ema, transformer_trainable_parameters, config
