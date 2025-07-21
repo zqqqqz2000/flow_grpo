@@ -10,6 +10,8 @@ from collections import defaultdict
 from concurrent import futures
 from functools import partial
 
+from flow_grpo.curr_sampler import CurrDistributedSampler
+from flow_grpo.scene_dataset import SceneDataset
 import numpy as np
 import torch
 import tqdm
@@ -626,67 +628,39 @@ def main(_):
     reward_fn = getattr(flow_grpo.rewards, "unifiedreward_score_sglang")(accelerator.device)
     eval_reward_fn = getattr(flow_grpo.rewards, "unifiedreward_score_sglang")(accelerator.device)
 
-    if config.prompt_fn == "general_ocr":
-        train_dataset = TextPromptDataset(config.dataset, "train")
-        test_dataset = TextPromptDataset(config.dataset, "test")
+    train_dataset = SceneDataset("./data/curr_rft_data_20250709.json")
+    # TODO: test datast
+    test_dataset = SceneDataset("./data/curr_rft_data_20250709.json")
 
-        # Create an infinite-loop DataLoader
-        train_sampler = DistributedKRepeatSampler(
-            dataset=train_dataset,
-            batch_size=config.sample.train_batch_size,
-            k=config.sample.num_image_per_prompt,
-            num_replicas=accelerator.num_processes,
-            rank=accelerator.process_index,
-            seed=42,
-        )
+    # Create an infinite-loop DataLoader
+    train_sampler = CurrDistributedSampler(
+        train_dataset,
+        num_replicas=torch.distributed.get_world_size(),
+        rank=torch.distributed.get_rank(),
+        seed=123543,
+        strategy="cosine",  # "timestep", "balance", "cosine", "gaussian"
+        total_steps=300,
+        alpha=0.5,
+        beta=0.8,
+    )
 
-        # Create a DataLoader; note that shuffling is not needed here because it’s controlled by the Sampler.
-        train_dataloader = DataLoader(
-            train_dataset,
-            batch_sampler=train_sampler,
-            num_workers=1,
-            collate_fn=TextPromptDataset.collate_fn,
-            # persistent_workers=True
-        )
+    # Create a DataLoader; note that shuffling is not needed here because it’s controlled by the Sampler.
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_sampler=train_sampler,
+        num_workers=1,
+        collate_fn=SceneDataset.collate_fn,
+        # persistent_workers=True
+    )
 
-        # Create a regular DataLoader
-        test_dataloader = DataLoader(
-            test_dataset,
-            batch_size=config.sample.test_batch_size,
-            collate_fn=TextPromptDataset.collate_fn,
-            shuffle=False,
-            num_workers=8,
-        )
-
-    elif config.prompt_fn == "geneval":
-        train_dataset = GenevalPromptDataset(config.dataset, "train")
-        test_dataset = GenevalPromptDataset(config.dataset, "test")
-
-        train_sampler = DistributedKRepeatSampler(
-            dataset=train_dataset,
-            batch_size=config.sample.train_batch_size,
-            k=config.sample.num_image_per_prompt,
-            num_replicas=accelerator.num_processes,
-            rank=accelerator.process_index,
-            seed=42,
-        )
-
-        train_dataloader = DataLoader(
-            train_dataset,
-            batch_sampler=train_sampler,
-            num_workers=1,
-            collate_fn=GenevalPromptDataset.collate_fn,
-            # persistent_workers=True
-        )
-        test_dataloader = DataLoader(
-            test_dataset,
-            batch_size=config.sample.test_batch_size,
-            collate_fn=GenevalPromptDataset.collate_fn,
-            shuffle=False,
-            num_workers=8,
-        )
-    else:
-        raise NotImplementedError("Only general_ocr is supported with dataset")
+    # Create a regular DataLoader
+    test_dataloader = DataLoader(
+        test_dataset,
+        batch_size=config.sample.test_batch_size,
+        collate_fn=SceneDataset.collate_fn,
+        shuffle=False,
+        num_workers=8,
+    )
 
     neg_prompt_embed, neg_pooled_prompt_embed = compute_text_embeddings(
         [""],
@@ -858,7 +832,7 @@ def main(_):
             )  # (batch_size, num_steps)
 
             # compute rewards asynchronously
-            rewards = executor.submit(reward_fn, images, prompts, prompt_metadata)
+            rewards = executor.submit(reward_fn, images, prompt_metadata)
             # yield to to make sure reward computation starts
             time.sleep(0)
 
