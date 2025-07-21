@@ -86,7 +86,7 @@ def pickscore_sd3():
     config.train.ref_update_step=10000000
     
     config.train.batch_size = config.sample.train_batch_size
-    config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch//2
+    config.train.gradient_accumulation_steps = 1
     config.train.num_inner_epochs = 1
     config.train.timestep_fraction = 0.99
     config.train.beta = 100   
