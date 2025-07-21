@@ -513,6 +513,7 @@ def main(_):
         batch_sampler=train_sampler,
         num_workers=1,
         collate_fn=SceneDataset.collate_fn,
+        drop_last=True,
         # persistent_workers=True
     )
 
