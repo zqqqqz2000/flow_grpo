@@ -43,8 +43,10 @@ pip install -e .
 ### 2. Model Download
 To avoid redundant downloads and potential storage waste during multi-GPU training, please pre-download the required models in advance.
 
+**Models**
 * **SD3.5**: `stabilityai/stable-diffusion-3.5-medium`
 * **Flux**: `black-forest-labs/FLUX.1-dev`
+
 **Reward Models**
 * **PickScore**:
   * `laion/CLIP-ViT-H-14-laion2B-s32B-b79K`
