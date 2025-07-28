@@ -490,8 +490,8 @@ def main(_):
         eps=config.train.adam_epsilon,
     )
 
-    # prepare prompt and reward fn - simplified to use only unifiedreward
-    reward_fn = getattr(flow_grpo.rewards, "unifiedreward_score_sglang")(accelerator.device)
+    # prepare prompt and reward fn - use FineVQAReward
+    reward_fn = getattr(flow_grpo.rewards, "finevqa_reward_adapter")(accelerator.device)
 
     train_dataset = SceneDataset("./data/curr_rft_data_20250709.json")
 

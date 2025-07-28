@@ -1,4 +1,8 @@
 import io
+import tempfile
+import os
+from PIL import Image
+import numpy as np
 
 from t2v_metrics.models.vqascore_models import clip_t5_model
 
@@ -551,6 +555,40 @@ class FineVQAReward:
                 f.write(json.dumps(log_data, ensure_ascii=False) + "\n")
 
         return torch.tensor(vqa_score_list, dtype=torch.float32, device=self.device)
+
+
+def finevqa_reward_adapter(device):
+    """Adapter function for FineVQAReward to handle tensor images and prompt_metadata format"""
+
+    reward_model = FineVQAReward(device=device)
+
+    def reward_fn(images, prompt_metadata):
+        """
+        Args:
+            images: torch.Tensor of shape (batch_size, 3, H, W) with values in [0, 1]
+            prompt_metadata: List[Dict] containing scene data
+        Returns:
+            rewards: torch.Tensor of shape (batch_size,)
+            metadata: Dict
+        """
+        # Convert tensor images to temporary image files
+        temp_image_paths = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for i, image_tensor in enumerate(images):
+                # Convert from (3, H, W) to (H, W, 3) and scale to [0, 255]
+                image_np = (image_tensor.cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
+                image_pil = Image.fromarray(image_np)
+
+                temp_path = os.path.join(tmpdir, f"temp_image_{i}.jpg")
+                image_pil.save(temp_path)
+                temp_image_paths.append(temp_path)
+
+            # Call the actual reward model
+            rewards = reward_model(temp_image_paths, prompt_metadata)
+
+        return rewards.cpu().numpy(), {}
+
+    return reward_fn
 
 
 if __name__ == "__main__":
