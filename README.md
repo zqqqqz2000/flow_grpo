@@ -11,9 +11,9 @@
 
 **2025-07-28**
 
-- Added support for **Flux**
-- Added support for **CLIPScore**
-- Introduced `config.sample.same_latent` to control whether the same noise is reused for identical prompts, addressing [Issue #7](https://github.com/yifan123/flow_grpo/issues/7)
+- Added support for **FLUX**.
+- Added support for CLIPScore as reward model.
+- Introduced `config.sample.same_latent` to control whether the same noise is reused for identical prompts, addressing [Issue #7](https://github.com/yifan123/flow_grpo/issues/7).
 
 **2025-05-15** 
 
