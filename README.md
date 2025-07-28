@@ -135,10 +135,6 @@ Multi-node training:
 
 Please update the entry Python script and config file names in the `scripts/multi_node` bash file.
 
-以下是润色后的英文版本，使语法更严谨、逻辑更清晰，并统一格式风格，适用于 GitHub README：
-
----
-
 ## How to Support Other Models
 
 To integrate a new model into this framework, please follow the steps below:
