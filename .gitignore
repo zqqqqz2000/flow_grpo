@@ -306,6 +306,3 @@ tags
 wandb/
 logs/
 notebooks/
-*.mp4
-*.jpg
-*.png

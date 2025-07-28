@@ -7,9 +7,20 @@
   <a href='https://huggingface.co/spaces/jieliu/SD3.5-M-Flow-GRPO'><img src='https://img.shields.io/badge/Demo-blue?logo=huggingface'></a> &nbsp;
 </div>
 
-## 📝 Updates
-- __[2025.05.15]__: 🔥We showcase image examples from three tasks and their training evolution at https://gongyeliu.github.io/Flow-GRPO. Check them out!
-- __[2025.05.13]__: 🔥We now provide an online demo for all three tasks at https://huggingface.co/spaces/jieliu/SD3.5-M-Flow-GRPO. You're welcome to try it out!
+## Changelog
+
+**2025-07-28**
+
+- Added support for **Flux**
+- Added support for **CLIPScore**
+- Introduced `config.sample.same_latent` to control whether the same noise is reused for identical prompts, addressing [Issue #7](https://github.com/yifan123/flow_grpo/issues/7)
+
+**2025-05-15** 
+
+- 🔥We showcase image examples from three tasks and their training evolution at https://gongyeliu.github.io/Flow-GRPO. Check them out!
+- 🔥We now provide an online demo for all three tasks at https://huggingface.co/spaces/jieliu/SD3.5-M-Flow-GRPO. You're welcome to try it out!
+
+
 
 ## 🤗 Model
 | Task    | Model |
@@ -17,6 +28,7 @@
 | GenEval     | [🤗GenEval](https://huggingface.co/jieliu/SD3.5M-FlowGRPO-GenEval) |
 | Text Rendering     | [🤗Text](https://huggingface.co/jieliu/SD3.5M-FlowGRPO-Text) |
 | Human Preference Alignment     | [🤗PickScore](https://huggingface.co/jieliu/SD3.5M-FlowGRPO-PickScore) |
+
 
 ## 🚀 Quick Started
 ### 1. Environment Set Up
@@ -27,7 +39,21 @@ cd flow_grpo
 conda create -n flow_grpo python=3.10.16
 pip install -e .
 ```
-### 2. Reward Preparation
+
+### 2. Model Download
+To avoid redundant downloads and potential storage waste during multi-GPU training, please pre-download the required models in advance.
+
+* **SD3.5**: `stabilityai/stable-diffusion-3.5-medium`
+* **Flux**: `black-forest-labs/FLUX.1-dev`
+**Reward Models**
+* **PickScore**:
+  * `laion/CLIP-ViT-H-14-laion2B-s32B-b79K`
+  * `yuvalkirstain/PickScore_v1`
+* **CLIPScore**: `openai/clip-vit-large-patch14`
+* **Aesthetic Score**: `openai/clip-vit-large-patch14`
+
+
+### 3. Reward Preparation
 The steps above only install the current repository. Since each reward model may rely on different versions, combining them in one Conda environment can cause version conflicts. To avoid this, we adopt a remote server setup inspired by ddpo-pytorch. You only need to install the specific reward model you plan to use.
 
 #### GenEval
@@ -70,20 +96,32 @@ pip install image-reward
 pip install git+https://github.com/openai/CLIP.git
 ```
 
-### 3. Start Training
+### 4. Start Training
 #### GRPO
 Single-node training:
 ```bash
+# sd3
 bash scripts/single_node/grpo.sh
+# flux
+bash scripts/single_node/grpo_flux.sh
 ```
-Multi-node training:
+Multi-node training for SD3:
 ```bash
 # Master node
-bash scripts/multi_node/main.sh
+bash scripts/multi_node/sd3/main.sh
 # Other nodes
-bash scripts/multi_node/main1.sh
-bash scripts/multi_node/main2.sh
-bash scripts/multi_node/main3.sh
+bash scripts/multi_node/sd3/main1.sh
+bash scripts/multi_node/sd3/main2.sh
+bash scripts/multi_node/sd3/main3.sh
+```
+Multi-node training for Flux:
+```bash
+# Master node
+bash scripts/multi_node/flux/main.sh
+# Other nodes
+bash scripts/multi_node/flux/main1.sh
+bash scripts/multi_node/flux/main2.sh
+bash scripts/multi_node/flux/main3.sh
 ```
 #### DPO / OnlineDPO / SFT / OnlineSFT
  Single-node training:
@@ -94,6 +132,35 @@ bash scripts/single_node/sft.sh
 Multi-node training:
 
 Please update the entry Python script and config file names in the `scripts/multi_node` bash file.
+
+以下是润色后的英文版本，使语法更严谨、逻辑更清晰，并统一格式风格，适用于 GitHub README：
+
+---
+
+## How to Support Other Models
+
+To integrate a new model into this framework, please follow the steps below:
+
+**1. Add the following files adapted for your model:**
+
+* `flow_grpo/diffusers_patch/sd3_pipeline_with_logprob.py`:
+  This file is adapted from [pipeline\_stable\_diffusion\_3.py](https://github.com/huggingface/diffusers/blob/main/src/diffusers/pipelines/stable_diffusion_3/pipeline_stable_diffusion_3.py). You can refer to diffusers for your model.
+
+* `scripts/train_sd3.py`:
+  This script is based on [train\_dreambooth\_lora\_sd3.py](https://github.com/huggingface/diffusers/blob/main/examples/dreambooth/train_dreambooth_lora_sd3.py) from the DreamBooth examples.
+
+* `flow_grpo/diffusers_patch/sd3_sde_with_logprob.py`:
+  This file handles SDE sampling. In most cases, you don't need to modify it. However, if your definitions of `dt` or `velocity` differ in sign or convention, please adjust accordingly.
+
+**2. Verify SDE sampling:**
+Set `noise_level = 0` in [sde\_demo.py](https://github.com/yifan123/flow_grpo/tree/main/scripts/demo/sd3_sde_demo.py) to check whether the generated images look normal. This helps verify that your SDE implementation is correct.
+
+**3. Ensure on-policy consistency:**
+Set [`config.sample.num_batches_per_epoch = 1`](https://github.com/yifan123/flow_grpo/blob/main/config/grpo.py#L120) and [`config.train.gradient_accumulation_steps = 1`](https://github.com/yifan123/flow_grpo/blob/main/config/grpo.py#L125C5-L125C47) to enforce a purely on-policy setup, where the model collecting samples is identical to the one being trained.
+Under this setting, the [ratio](https://github.com/yifan123/flow_grpo/blob/main/scripts/train_sd3.py#L886) should remain exactly 1. If it's not, please check whether the sampling and training code paths differ—for example, through use of `torch.compile` or other model wrappers—and make sure both share the same logic.
+
+**4. Tune reward behavior:**
+Start with `config.train.beta = 0` to observe if the reward increases during training. You may also need to adjust the noise level [here](https://github.com/yifan123/flow_grpo/blob/main/flow_grpo/diffusers_patch/sd3_sde_with_logprob.py#L47) based on your model. Other hyperparameters are generally model-agnostic and can be kept as default.
 
 
 ## 🏁 Multi Reward Training

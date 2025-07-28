@@ -44,6 +44,20 @@ def aesthetic_score():
 
     return _fn
 
+def clip_score():
+    from flow_grpo.clip_scorer import ClipScorer
+
+    scorer = ClipScorer(dtype=torch.float32).cuda()
+
+    def _fn(images, prompts, metadata):
+        if not isinstance(images, torch.Tensor):
+            images = images.transpose(0, 3, 1, 2)  # NHWC -> NCHW
+            images = torch.tensor(images, dtype=torch.uint8)/255.0
+        scores = scorer(images, prompts)
+        return scores, {}
+
+    return _fn
+
 def pickscore_score(device):
     from flow_grpo.pickscore_scorer import PickScoreScorer
 
@@ -368,6 +382,7 @@ def multi_score(device, score_dict):
         "jpeg_compressibility": jpeg_compressibility,
         "unifiedreward": unifiedreward_score_sglang,
         "geneval": geneval_score,
+        "clipscore": clip_score,
     }
     score_fns={}
     for score_name, weight in score_dict.items():

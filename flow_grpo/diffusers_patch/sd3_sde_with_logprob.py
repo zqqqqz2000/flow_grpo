@@ -39,8 +39,8 @@ def sde_step_with_logprob(
 
     step_index = [self.index_for_timestep(t) for t in timestep]
     prev_step_index = [step+1 for step in step_index]
-    sigma = self.sigmas[step_index].view(-1, 1, 1, 1)
-    sigma_prev = self.sigmas[prev_step_index].view(-1, 1, 1, 1)
+    sigma = self.sigmas[step_index].view(-1, *([1] * (len(sample.shape) - 1)))
+    sigma_prev = self.sigmas[prev_step_index].view(-1, *([1] * (len(sample.shape) - 1)))
     sigma_max = self.sigmas[1].item()
     dt = sigma_prev - sigma
 

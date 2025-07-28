@@ -52,7 +52,9 @@ def get_config():
     sample.global_std = True
     # noise level
     sample.noise_level = 0.7
-
+    # Whether to use the same noise for the same prompt
+    sample.same_latent = False
+    
     ###### Training ######
     config.train = train = ml_collections.ConfigDict()
     # batch size (per GPU!) to use for training.
